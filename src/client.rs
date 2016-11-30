@@ -2,8 +2,7 @@ use hyper::client::Client as HttpClient;
 use hyper::net::{OpensslClient, HttpsConnector};
 use hyper::method::Method;
 use openssl::ssl;
-use openssl::ssl::error::SslError;
-use openssl::x509::{X509FileType, X509StoreContext};
+use openssl::x509::X509FileType;
 use error::Error;
 use request::RequestBuilder;
 
@@ -15,13 +14,33 @@ pub struct Config {
     cert_key_file: Option<(String, String)>,
 }
 
-pub struct XBusClient {
+impl Config {
+    pub fn new(endpoint: &str) -> Config {
+        Config {
+            endpoint: endpoint.to_owned(),
+            ca_file: None,
+            cert_key_file: None,
+        }
+    }
+
+    pub fn ca_file(mut self, file: &str) -> Config {
+        self.ca_file = Some(file.to_owned());
+        self
+    }
+
+    pub fn cert_key_file(mut self, cert: &str, key: &str) -> Config {
+        self.cert_key_file = Some((cert.to_owned(), key.to_owned()));
+        self
+    }
+}
+
+pub struct Client {
     config: Config,
     client: HttpClient,
 }
 
-impl XBusClient {
-    pub fn new(config: Config) -> Result<XBusClient, Error> {
+impl Client {
+    pub fn new(config: Config) -> Result<Client, Error> {
         ssl::init();
         let mut ssl_ctx: ssl::SslContext = try!(ssl::SslContext::new(ssl::SslMethod::Tlsv1_2));
         if let Some(ref ca_file) = config.ca_file {
@@ -34,7 +53,7 @@ impl XBusClient {
         ssl_ctx.set_verify(ssl::SSL_VERIFY_NONE, None);
         let ssl_connector = HttpsConnector::new(OpensslClient::new(ssl_ctx));
         let http_client = HttpClient::with_connector(ssl_connector);
-        Ok(XBusClient {
+        Ok(Client {
             config: config,
             client: http_client,
         })

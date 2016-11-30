@@ -1,7 +1,6 @@
 use std::io::Read;
 use std::collections::HashMap;
 use hyper::client::Client as HttpClient;
-use hyper::header::Headers;
 use hyper::method::Method;
 use hyper::status::StatusCode;
 use hyper::Url;

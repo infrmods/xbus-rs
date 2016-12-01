@@ -2,7 +2,8 @@ use std::error::Error as StdError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use std::io::Error as IOError;
 use openssl::ssl::error::SslError;
-use serde_json::error::Error as JsonError;
+use serde_json::Error as JsonError;
+use serde_yaml::Error as YamlError;
 use url::ParseError;
 use hyper::Error as HttpError;
 
@@ -12,7 +13,7 @@ pub enum Error {
     Io(IOError),
     Http(String),
     Ssl(String),
-    Json(String),
+    Serialize(String),
     Request(String, String),
     Other(String),
 }
@@ -23,7 +24,7 @@ impl Display for Error {
             Error::Io(ref e) => e.fmt(f),
             Error::Http(ref e) => write!(f, "{}", e),
             Error::Ssl(ref e) => write!(f, "{}", e),
-            Error::Json(ref e) => write!(f, "{}", e),
+            Error::Serialize(ref e) => write!(f, "{}", e),
             Error::Request(ref code, ref message) => {
                 write!(f, "request fail[{}]: {}", code, message)
             }
@@ -38,7 +39,7 @@ impl StdError for Error {
             Error::Io(ref e) => e.description(),
             Error::Http(ref e) => e,
             Error::Ssl(ref e) => e,
-            Error::Json(ref e) => e,
+            Error::Serialize(ref e) => e,
             Error::Request(_, ref message) => message,
             Error::Other(ref e) => e,
         }
@@ -71,7 +72,16 @@ impl From<JsonError> for Error {
     fn from(err: JsonError) -> Error {
         match err {
             JsonError::Io(err) => Error::Io(err),
-            _ => Error::Json(format!("{}", err)),
+            _ => Error::Serialize(format!("{}", err)),
+        }
+    }
+}
+
+impl From<YamlError> for Error {
+    fn from(err: YamlError) -> Error {
+        match err {
+            YamlError::Io(err) => Error::Io(err),
+            _ => Error::Serialize(format!("{}", err)),
         }
     }
 }

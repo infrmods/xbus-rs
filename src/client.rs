@@ -7,6 +7,7 @@ use error::Error;
 use request::RequestBuilder;
 use serde::Deserialize;
 use serde_json;
+use serde_yaml;
 
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -88,6 +89,10 @@ pub struct Item {
 impl Item {
     pub fn json<T: Deserialize>(&self) -> Result<T, serde_json::Error> {
         serde_json::from_str(&self.value)
+    }
+
+    pub fn yaml<T: Deserialize>(&self) -> Result<T, serde_yaml::Error> {
+        serde_yaml::from_str(&self.value)
     }
 }
 

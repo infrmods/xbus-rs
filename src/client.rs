@@ -5,6 +5,8 @@ use openssl::ssl;
 use openssl::x509::X509FileType;
 use error::Error;
 use request::RequestBuilder;
+use serde::Deserialize;
+use serde_json;
 
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -81,6 +83,12 @@ pub struct Item {
     pub name: String,
     pub value: String,
     pub version: u64,
+}
+
+impl Item {
+    pub fn json<T: Deserialize>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_str(&self.value)
+    }
 }
 
 #[cfg(test)]

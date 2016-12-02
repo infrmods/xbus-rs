@@ -16,9 +16,3 @@ mod request;
 pub use error::Error;
 pub use client::Config;
 pub use client::Client;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {}
-}

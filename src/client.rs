@@ -53,7 +53,7 @@ impl Client {
             try!(ssl_ctx.set_certificate_file(cert_file.as_str(), X509FileType::PEM));
             try!(ssl_ctx.set_private_key_file(key_file.as_str(), X509FileType::PEM));
         }
-        ssl_ctx.set_verify(ssl::SSL_VERIFY_NONE, None);
+        ssl_ctx.set_verify(ssl::SSL_VERIFY_PEER, None);
         let ssl_connector = HttpsConnector::new(OpensslClient::new(ssl_ctx));
         let http_client = HttpClient::with_connector(ssl_connector);
         Ok(Client {
@@ -98,17 +98,17 @@ impl Item {
 
 #[cfg(test)]
 mod test {
-    use super::XBusClient;
+    use super::Client;
     use super::Config;
     use super::Item;
 
-    fn client() -> XBusClient {
+    fn client() -> Client {
         let config = Config {
             endpoint: "https://localhost:4433".to_owned(),
             ca_file: Some("cacert.pem".to_owned()),
             cert_key_file: None,
         };
-        XBusClient::new(config).unwrap()
+        Client::new(config).unwrap()
     }
 
     #[test]

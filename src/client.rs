@@ -1,5 +1,5 @@
 use hyper::client::Client as HttpClient;
-use hyper::net::{OpensslClient, HttpsConnector};
+use hyper::net::HttpsConnector;
 use hyper::method::Method;
 use openssl::ssl;
 use openssl::x509::X509FileType;
@@ -8,6 +8,7 @@ use request::RequestBuilder;
 use serde::Deserialize;
 use serde_json;
 use serde_yaml;
+use ssl::new_https_connector;
 
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -44,17 +45,19 @@ pub struct Client {
 
 impl Client {
     pub fn new(config: Config) -> Result<Client, Error> {
-        ssl::init();
-        let mut ssl_ctx: ssl::SslContext = try!(ssl::SslContext::new(ssl::SslMethod::Tlsv1_2));
-        if let Some(ref ca_file) = config.ca_file {
-            try!(ssl_ctx.set_CA_file(ca_file.as_str()));
-        }
-        if let Some((ref cert_file, ref key_file)) = config.cert_key_file {
-            try!(ssl_ctx.set_certificate_file(cert_file.as_str(), X509FileType::PEM));
-            try!(ssl_ctx.set_private_key_file(key_file.as_str(), X509FileType::PEM));
-        }
-        ssl_ctx.set_verify(ssl::SSL_VERIFY_PEER, None);
-        let ssl_connector = HttpsConnector::new(OpensslClient::new(ssl_ctx));
+        // ssl::init();
+        // let mut ssl_ctx: ssl::SslContext = try!(ssl::SslContext::new(ssl::SslMethod::Tlsv1_2));
+        // if let Some(ref ca_file) = config.ca_file {
+        // try!(ssl_ctx.set_CA_file(ca_file.as_str()));
+        // }
+        // if let Some((ref cert_file, ref key_file)) = config.cert_key_file {
+        // try!(ssl_ctx.set_certificate_file(cert_file.as_str(), X509FileType::PEM));
+        // try!(ssl_ctx.set_private_key_file(key_file.as_str(), X509FileType::PEM));
+        // }
+        // ssl_ctx.set_verify(ssl::SSL_VERIFY_PEER, None);
+        // let ssl_connector = HttpsConnector::new(OpensslClient::new(ssl_ctx));
+        let ssl_connector =
+            new_https_connector(config.ca_file.as_ref(), config.cert_key_file.as_ref())?;
         let http_client = HttpClient::with_connector(ssl_connector);
         Ok(Client {
             config: config,

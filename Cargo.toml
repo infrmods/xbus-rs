@@ -8,9 +8,8 @@ serde = "0.8"
 serde_derive = "0.8"
 serde_json = "0.8"
 serde_yaml = "0.5"
-hyper = "0.9"
+hyper = {version = "0.9", default-features = false}
 url = "1.0"
 
 [dependencies.openssl]
-version = "0.7"
-features = ["tlsv1_2"]
+version = "0.9"

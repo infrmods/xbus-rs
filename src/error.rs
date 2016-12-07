@@ -1,7 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use std::io::Error as IOError;
-use openssl::ssl::error::SslError;
+use openssl::ssl::Error as SslError;
 use serde_json::Error as JsonError;
 use serde_yaml::Error as YamlError;
 use url::ParseError;

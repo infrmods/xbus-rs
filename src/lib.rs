@@ -12,6 +12,7 @@ extern crate url;
 pub mod error;
 pub mod client;
 mod request;
+mod ssl;
 
 pub use error::Error;
 pub use client::Config;

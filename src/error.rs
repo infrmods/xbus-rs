@@ -2,6 +2,7 @@ use std::error::Error as StdError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use std::io::Error as IOError;
 use openssl::ssl::Error as SslError;
+use openssl::error::ErrorStack as SslErrorStack;
 use serde_json::Error as JsonError;
 use serde_yaml::Error as YamlError;
 use url::ParseError;
@@ -64,6 +65,12 @@ impl From<HttpError> for Error {
 
 impl From<SslError> for Error {
     fn from(err: SslError) -> Error {
+        Error::Ssl(format!("{}", err))
+    }
+}
+
+impl From<SslErrorStack> for Error {
+    fn from(err: SslErrorStack) -> Error {
         Error::Ssl(format!("{}", err))
     }
 }

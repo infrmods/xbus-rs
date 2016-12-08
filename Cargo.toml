@@ -10,6 +10,5 @@ serde_json = "0.8"
 serde_yaml = "0.5"
 hyper = {version = "0.9", default-features = false}
 url = "1.0"
-
-[dependencies.openssl]
-version = "0.9"
+openssl = "0.9"
+openssl-verify = {git = "https://github.com/sfackler/rust-openssl-verify"}

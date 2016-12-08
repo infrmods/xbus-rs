@@ -1,10 +1,12 @@
+use std::fmt::Debug;
 use std::io::{Read, Write, Error as IoError};
-use std::process::exit;
 use std::net::{SocketAddr, Shutdown};
 use std::time::Duration;
 use openssl::ssl::{SslStream, SslContext, Ssl, SslMethod};
 use openssl::x509::X509_FILETYPE_PEM;
-use hyper::net::{NetworkStream, SslClient, HttpsConnector, HttpStream};
+use openssl::ssl::SSL_VERIFY_PEER;
+use openssl::error::ErrorStack;
+use hyper::net::{NetworkStream, SslClient, HttpsConnector};
 use hyper::Error as HError;
 
 
@@ -17,22 +19,19 @@ impl<T> Clone for WrapStream<T> {
 }
 
 impl<T: Read + Write> Read for WrapStream<T> {
+    #[inline]
     fn read(&mut self, mut buf: &mut [u8]) -> Result<usize, IoError> {
-        println!("read stream");
-        let r = self.0.read(&mut buf);
-        println!("read ok");
-        r
+        self.0.read(&mut buf)
     }
 }
 
 impl<T: Read + Write> Write for WrapStream<T> {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> Result<usize, IoError> {
-        println!("write stream");
-        let r = self.0.write(buf);
-        println!("--write finished");
-        r
+        self.0.write(buf)
     }
 
+    #[inline]
     fn flush(&mut self) -> Result<(), IoError> {
         self.0.flush()
     }
@@ -63,35 +62,27 @@ impl<T: NetworkStream> NetworkStream for WrapStream<T> {
 pub struct OpensslClient(SslContext);
 
 impl OpensslClient {
-    /// Creates a new OpensslClient with a custom SslContext
     pub fn new(ctx: SslContext) -> OpensslClient {
         OpensslClient(ctx)
     }
 }
 
-impl<T: NetworkStream + Send + Clone> SslClient<T> for OpensslClient {
+fn err_stack_to_hyper(e: ErrorStack) -> HError {
+    HError::Ssl(Box::new(::Error::from(e)))
+}
+
+impl<T: NetworkStream + Send + Clone + Debug> SslClient<T> for OpensslClient {
     type Stream = WrapStream<T>;
 
-    #[cfg(not(windows))]
     fn wrap_client(&self, stream: T, host: &str) -> Result<Self::Stream, HError> {
-        // TODO
-        let mut ssl = Ssl::new(&self.0).unwrap();
-        ssl.set_hostname(host).unwrap();
+        let mut ssl = Ssl::new(&self.0).map_err(err_stack_to_hyper)?;
+        ssl.set_hostname(host).map_err(err_stack_to_hyper)?;
         let host = host.to_owned();
-        // ssl.set_verify_callback(SSL_VERIFY_PEER,
-        // move |p, x| ::openssl_verify::verify_callback(&host, p, x));
-        Ok(WrapStream(ssl.connect(stream).unwrap_or_else(|e| {
-            println!("ssl connect fail");
-            exit(-1);
-        })))
+        ssl.set_verify_callback(SSL_VERIFY_PEER,
+                                move |p, x| ::openssl_verify::verify_callback(&host, p, x));
+        Ok(WrapStream(ssl.connect(stream)
+            .map_err(|e| HError::Ssl(Box::new(::Error::Ssl(format!("connect fail: {}", e)))))?))
     }
-
-    // #[cfg(windows)]
-    // fn wrap_client(&self, stream: T, host: &str) -> Result<Self::Stream, HError> {
-    // let mut ssl = try!(Ssl::new(&self.0));
-    // try!(ssl.set_hostname(host));
-    // SslStream::connect(ssl, stream).map_err(From::from)
-    // }
 }
 
 pub fn new_https_connector(ca_cert: Option<&String>,

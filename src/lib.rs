@@ -8,6 +8,7 @@ extern crate serde_json;
 extern crate serde_yaml;
 extern crate hyper;
 extern crate url;
+extern crate openssl_verify;
 
 pub mod error;
 pub mod client;

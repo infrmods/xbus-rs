@@ -1,8 +1,5 @@
 use hyper::client::Client as HttpClient;
-use hyper::net::HttpsConnector;
 use hyper::method::Method;
-use openssl::ssl;
-use openssl::x509::X509FileType;
 use error::Error;
 use request::RequestBuilder;
 use serde::Deserialize;

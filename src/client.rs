@@ -71,11 +71,27 @@ impl Client {
             .send()
             .map(|r: ItemResult| r.config)
     }
+
+    pub fn get_all(&self, keys: &Vec<String>) -> Result<Vec<Item>, Error> {
+        let val = serde_json::to_string(keys)?;
+        self.request(Method::Get, "/api/configs")
+            .param("keys", &val)
+            .send()
+            .map(|r: ItemsResult| r.configs)
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ItemsResult {
+    configs: Vec<Item>,
+    #[allow(dead_code)]
+    revision: u64,
 }
 
 #[derive(Deserialize)]
 pub struct ItemResult {
     config: Item,
+    #[allow(dead_code)]
     revision: u64,
 }
 

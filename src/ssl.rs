@@ -90,11 +90,14 @@ pub fn new_https_connector(ca_cert: Option<&String>,
                            -> Result<HttpsConnector<OpensslClient>, ::Error> {
     let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
     if let Some(path) = ca_cert {
-        builder.set_ca_file(path).unwrap();
+        builder.set_ca_file(path)
+            .map_err(|e| ::Error::Ssl(format!("set cacert({}) fail: {}", path, e)))?;
     }
     if let Some(&(ref cert, ref key)) = cert_key {
-        builder.set_certificate_file(cert, X509_FILETYPE_PEM).unwrap();
-        builder.set_private_key_file(key, X509_FILETYPE_PEM).unwrap();
+        builder.set_certificate_file(cert, X509_FILETYPE_PEM)
+            .map_err(|e| ::Error::Ssl(format!("set cert({}) fail: {}", cert, e)))?;
+        builder.set_private_key_file(key, X509_FILETYPE_PEM)
+            .map_err(|e| ::Error::Ssl(format!("set private key({}) fail: {}", key, e)))?;
     }
     Ok(HttpsConnector::new(OpensslClient::new(builder.build())))
 }

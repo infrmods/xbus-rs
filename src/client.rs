@@ -1,4 +1,5 @@
 use hyper::client::Client as HttpClient;
+use hyper::client::pool::{Pool, Config as PoolConfig};
 use hyper::method::Method;
 use hyper::net::HttpsConnector;
 use hyper_native_tls::NativeTlsClient;
@@ -11,12 +12,15 @@ use serde::Deserialize;
 use request::RequestBuilder;
 use error::Error;
 
+const DEFAULT_IDLE: usize = 4;
+
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Config {
     endpoint: String,
     ca_file: Option<String>,
     cert_key_file: Option<(String, String)>,
+    max_idle_connections: Option<usize>,
 }
 
 impl Config {
@@ -25,6 +29,7 @@ impl Config {
             endpoint: endpoint.to_owned(),
             ca_file: None,
             cert_key_file: None,
+            max_idle_connections: None,
         }
     }
 
@@ -65,7 +70,12 @@ impl Client {
 
     pub fn new(config: Config) -> Result<Client, Error> {
         let connector = HttpsConnector::new(Self::tls_client(&config)?);
-        let http_client = HttpClient::with_connector(connector);
+        let pool = Pool::with_connector(PoolConfig {
+                                            max_idle: config.max_idle_connections
+                                                .unwrap_or(DEFAULT_IDLE),
+                                        },
+                                        connector);
+        let http_client = HttpClient::with_connector(pool);
         Ok(Client {
             config: config,
             client: http_client,

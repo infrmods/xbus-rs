@@ -1,6 +1,3 @@
-#![feature(proc_macro)]
-
-extern crate openssl;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -8,12 +5,13 @@ extern crate serde_json;
 extern crate serde_yaml;
 extern crate hyper;
 extern crate url;
-extern crate openssl_verify;
+extern crate hyper_native_tls;
+extern crate native_tls;
+extern crate openssl;
 
 pub mod error;
 pub mod client;
 mod request;
-mod ssl;
 
 pub use error::Error;
 pub use client::Config;

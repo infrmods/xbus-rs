@@ -4,11 +4,12 @@ version = "0.1.0"
 authors = ["lolynx <londevil@gmail.com>"]
 
 [dependencies]
-serde = "0.8"
-serde_derive = "0.8"
-serde_json = "0.8"
-serde_yaml = "0.5"
-hyper = {version = "0.9", default-features = false}
-url = "1.0"
+serde = "0.9"
+serde_derive = "0.9"
+serde_json = "0.9"
+serde_yaml = "0.6"
+hyper = "0.10"
+hyper-native-tls = "0.2"
+native-tls = "0.1"
+url = "1.4"
 openssl = "0.9"
-openssl-verify = {git = "https://github.com/sfackler/rust-openssl-verify"}

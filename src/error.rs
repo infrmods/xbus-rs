@@ -1,12 +1,11 @@
 use std::error::Error as StdError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use std::io::Error as IOError;
-use openssl::ssl::Error as SslError;
-use openssl::error::ErrorStack as SslErrorStack;
 use serde_json::Error as JsonError;
 use serde_yaml::Error as YamlError;
 use url::ParseError;
 use hyper::Error as HttpError;
+use native_tls::Error as TlsError;
 
 
 #[derive(Debug)]
@@ -63,33 +62,15 @@ impl From<HttpError> for Error {
     }
 }
 
-impl From<SslError> for Error {
-    fn from(err: SslError) -> Error {
-        Error::Ssl(format!("{}", err))
-    }
-}
-
-impl From<SslErrorStack> for Error {
-    fn from(err: SslErrorStack) -> Error {
-        Error::Ssl(format!("{}", err))
-    }
-}
-
 impl From<JsonError> for Error {
     fn from(err: JsonError) -> Error {
-        match err {
-            JsonError::Io(err) => Error::Io(err),
-            _ => Error::Serialize(format!("{}", err)),
-        }
+        Error::Serialize(format!("{}", err))
     }
 }
 
 impl From<YamlError> for Error {
     fn from(err: YamlError) -> Error {
-        match err {
-            YamlError::Io(err) => Error::Io(err),
-            _ => Error::Serialize(format!("{}", err)),
-        }
+        Error::Serialize(format!("{}", err))
     }
 }
 
@@ -108,5 +89,11 @@ impl From<String> for Error {
 impl<'a> From<&'a str> for Error {
     fn from(msg: &'a str) -> Error {
         Error::Other(msg.to_owned())
+    }
+}
+
+impl From<TlsError> for Error {
+    fn from(e: TlsError) -> Error {
+        Error::Ssl(format!("{}", e))
     }
 }

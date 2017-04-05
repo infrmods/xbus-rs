@@ -1,11 +1,15 @@
 use hyper::client::Client as HttpClient;
 use hyper::method::Method;
-use error::Error;
-use request::RequestBuilder;
-use serde::Deserialize;
+use hyper::net::HttpsConnector;
+use hyper_native_tls::NativeTlsClient;
+use native_tls::TlsConnector;
+use native_tls::backend::openssl::TlsConnectorBuilderExt;
+use openssl::x509::X509_FILETYPE_PEM;
 use serde_json;
 use serde_yaml;
-use ssl::new_https_connector;
+use serde::Deserialize;
+use request::RequestBuilder;
+use error::Error;
 
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -41,21 +45,27 @@ pub struct Client {
 }
 
 impl Client {
+    fn tls_client(config: &Config) -> Result<NativeTlsClient, Error> {
+        let mut tls_builder = TlsConnector::builder()?;
+        {
+            let mut builder = tls_builder.builder_mut().builder_mut();
+            if let Some(ref path) = config.ca_file {
+                builder.set_ca_file(path)
+                    .map_err(|e| Error::Ssl(format!("set cacert({}) fail: {}", path, e)))?;
+            }
+            if let Some((ref cert, ref key)) = config.cert_key_file {
+                builder.set_certificate_file(cert, X509_FILETYPE_PEM)
+                    .map_err(|e| Error::Ssl(format!("set cert({}) fail: {}", cert, e)))?;
+                builder.set_private_key_file(key, X509_FILETYPE_PEM)
+                    .map_err(|e| Error::Ssl(format!("set private key({}) fail: {}", key, e)))?;
+            }
+        }
+        Ok(tls_builder.build()?.into())
+    }
+
     pub fn new(config: Config) -> Result<Client, Error> {
-        // ssl::init();
-        // let mut ssl_ctx: ssl::SslContext = try!(ssl::SslContext::new(ssl::SslMethod::Tlsv1_2));
-        // if let Some(ref ca_file) = config.ca_file {
-        // try!(ssl_ctx.set_CA_file(ca_file.as_str()));
-        // }
-        // if let Some((ref cert_file, ref key_file)) = config.cert_key_file {
-        // try!(ssl_ctx.set_certificate_file(cert_file.as_str(), X509FileType::PEM));
-        // try!(ssl_ctx.set_private_key_file(key_file.as_str(), X509FileType::PEM));
-        // }
-        // ssl_ctx.set_verify(ssl::SSL_VERIFY_PEER, None);
-        // let ssl_connector = HttpsConnector::new(OpensslClient::new(ssl_ctx));
-        let ssl_connector =
-            new_https_connector(config.ca_file.as_ref(), config.cert_key_file.as_ref())?;
-        let http_client = HttpClient::with_connector(ssl_connector);
+        let connector = HttpsConnector::new(Self::tls_client(&config)?);
+        let http_client = HttpClient::with_connector(connector);
         Ok(Client {
             config: config,
             client: http_client,
@@ -116,7 +126,6 @@ impl Item {
 mod test {
     use super::Client;
     use super::Config;
-    use super::Item;
 
     fn client() -> Client {
         let config = Config {

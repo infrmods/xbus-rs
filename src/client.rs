@@ -123,11 +123,15 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn json<T: Deserialize>(&self) -> Result<T, serde_json::Error> {
+    pub fn json<T>(&self) -> Result<T, serde_json::Error>
+        where for<'de> T: Deserialize<'de>
+    {
         serde_json::from_str(&self.value)
     }
 
-    pub fn yaml<T: Deserialize>(&self) -> Result<T, serde_yaml::Error> {
+    pub fn yaml<T>(&self) -> Result<T, serde_yaml::Error>
+        where for<'de> T: Deserialize<'de>
+    {
         serde_yaml::from_str(&self.value)
     }
 }

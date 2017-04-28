@@ -44,7 +44,9 @@ impl<'a> RequestBuilder<'a> {
         self
     }
 
-    pub fn send<T: Deserialize>(self) -> Result<T, Error> {
+    pub fn send<T>(self) -> Result<T, Error>
+        where for<'de> T: Deserialize<'de>
+    {
         let mut url_str = self.endpoint.to_owned();
         url_str.push_str(self.path);
         let mut url = try!(Url::parse(&url_str));
@@ -74,13 +76,13 @@ struct RespError {
 
 
 #[derive(Deserialize, Debug)]
-struct Response<T: Deserialize> {
+struct Response<T> {
     pub ok: bool,
     pub result: Option<T>,
     pub error: Option<RespError>,
 }
 
-impl<T: Deserialize> Response<T> {
+impl<T> Response<T> {
     fn get(self) -> Result<T, Error> {
         if self.ok {
             match self.result {

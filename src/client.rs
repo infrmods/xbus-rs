@@ -10,12 +10,12 @@ use serde_yaml;
 use serde::Deserialize;
 use request::RequestBuilder;
 use error::Error;
-use futures::{Future, IntoFuture};
+use futures::{Future, IntoFuture, Stream, Poll, Async};
 
-const DEFAULT_IDLE: usize = 4;
+const DEFAULT_THREADS: usize = 4;
 
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
     endpoint: String,
     ca_file: Option<String>,
@@ -44,6 +44,7 @@ impl Config {
     }
 }
 
+#[derive(Clone)]
 pub struct Client {
     config: Config,
     client: HttpClient<HttpsConnector<HttpConnector>>,
@@ -69,7 +70,7 @@ impl Client {
     }
 
     pub fn new(config: Config, handle: &Handle) -> Result<Client, Error> {
-        let mut http_connector = HttpConnector::new(4, handle);
+        let mut http_connector = HttpConnector::new(DEFAULT_THREADS, handle);
         http_connector.enforce_http(false);
         let https_connector = HttpsConnector::from((http_connector, Self::tls_connector(&config)?));
         let http_client = HttpClient::configure().connector(https_connector).build(handle);
@@ -118,11 +119,46 @@ impl Client {
                          version: &str,
                          revision: u64,
                          timeout: u64)
-                         -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
-        Box::new(self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+                         -> ServiceWatcher {
+        ServiceWatcher::new(self, name, version, revision, timeout)
+    }
+}
+
+pub struct ServiceWatcher {
+    client: Client,
+    name: String,
+    version: String,
+    revision: u64,
+    timeout: u64,
+    task: Option<Box<Future<Item = Option<ServiceResult>, Error = Error>>>,
+}
+
+impl ServiceWatcher {
+    fn new(client: &Client,
+           name: &str,
+           version: &str,
+           revision: u64,
+           timeout: u64)
+           -> ServiceWatcher {
+        let mut w = ServiceWatcher {
+            client: client.clone(),
+            name: name.into(),
+            version: version.into(),
+            revision: revision,
+            timeout: timeout,
+            task: None,
+        };
+        w.new_task();
+        w
+    }
+
+    fn new_task(&mut self) {
+        self.task = Some(Box::new(self.client
+            .request(Method::Get,
+                     &format!("/api/services/{}/{}", &self.name, &self.version))
             .param("watch", "true")
-            .param("revision", &format!("{}", revision))
-            .param("timeout", &format!("{}", timeout))
+            .param("revision", &format!("{}", self.revision))
+            .param("timeout", &format!("{}", &self.timeout))
             .send()
             .and_then(|r| Ok(Some(r)))
             .or_else(|e| {
@@ -131,7 +167,34 @@ impl Client {
                 } else {
                     Err(e)
                 }
-            }))
+            })));
+    }
+}
+
+impl Stream for ServiceWatcher {
+    type Item = ServiceResult;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let mut try_poll = true;
+        let r = if let Some(ref mut task) = self.task {
+            match try_ready!(task.poll()) {
+                Some(result) => {
+                    self.revision = result.revision + 1;
+                    try_poll = false;
+                    Ok(Async::Ready(Some(result)))
+                }
+                None => Ok(Async::NotReady),
+            }
+        } else {
+            return Ok(Async::Ready(None));
+        };
+
+        self.new_task();
+        if try_poll {
+            return self.poll();
+        }
+        r
     }
 }
 

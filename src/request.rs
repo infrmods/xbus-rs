@@ -1,6 +1,5 @@
-use std::io::Read;
 use std::collections::HashMap;
-use hyper::{Client as HttpClient, Method, Uri, StatusCode, Request, Chunk};
+use hyper::{Client as HttpClient, Method, StatusCode, Request, Chunk};
 use hyper::client::Connect;
 use serde::Deserialize;
 use serde_json::from_slice;
@@ -58,7 +57,7 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
         }
         let uri = match url_str.parse() {
             Ok(u) => u,
-            Err(e) => {
+            Err(_) => {
                 return Box::new(Err(Error::from("invalid url")).into_future());
             }
         };

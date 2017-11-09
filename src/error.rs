@@ -18,6 +18,26 @@ pub enum Error {
     Other(String),
 }
 
+impl Error {
+    pub fn is_timeout(&self) -> bool {
+        if let &Error::Request(ref code, _) = self {
+            if code == "DEADLINE_EXCEEDED" {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        if let &Error::Request(ref code, _) = self {
+            if code == "NOT_FOUND" {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
         match *self {

@@ -53,7 +53,7 @@ impl Client {
     fn tls_client(config: &Config) -> Result<NativeTlsClient, Error> {
         let mut tls_builder = TlsConnector::builder()?;
         {
-            let mut builder = tls_builder.builder_mut().builder_mut();
+            let builder = tls_builder.builder_mut().builder_mut();
             if let Some(ref path) = config.ca_file {
                 builder.set_ca_file(path)
                     .map_err(|e| Error::Ssl(format!("set cacert({}) fail: {}", path, e)))?;
@@ -99,6 +99,32 @@ impl Client {
             .send()
             .map(|r: ItemsResult| r.configs)
     }
+
+    pub fn get_service(&self, name: &str, version: &str) -> Result<ServiceResult, Error> {
+        self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+            .send()
+    }
+
+    pub fn watch_service(&self,
+                         name: &str,
+                         version: &str,
+                         revision: u64,
+                         timeout: u64)
+                         -> Result<Option<ServiceResult>, Error> {
+        self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+            .param("watch", "true")
+            .param("revision", &format!("{}", revision))
+            .param("timeout", &format!("{}", timeout))
+            .send()
+            .and_then(|r| Ok(Some(r)))
+            .or_else(|e| {
+                if e.is_timeout() {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+    }
 }
 
 #[derive(Deserialize)]
@@ -120,6 +146,32 @@ pub struct Item {
     pub name: String,
     pub value: String,
     pub version: u64,
+}
+
+
+#[derive(Deserialize, Debug)]
+pub struct ServiceEndpoint {
+    pub address: String,
+    pub config: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Service {
+    pub name: String,
+    pub version: String,
+    #[serde(rename = "type")]
+    pub typ: String,
+    pub proto: Option<String>,
+    pub description: Option<String>,
+
+    pub endpoints: Vec<ServiceEndpoint>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ServiceResult {
+    pub service: Service,
+    #[allow(dead_code)]
+    pub revision: u64,
 }
 
 impl Item {

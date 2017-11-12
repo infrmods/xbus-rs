@@ -76,7 +76,6 @@ impl From<HttpError> for Error {
     fn from(err: HttpError) -> Error {
         match err {
             HttpError::Io(e) => Error::Io(e),
-            HttpError::Ssl(e) => Error::Ssl(format!("{}", e)),
             _ => Error::Other(err.description().to_owned()),
         }
     }

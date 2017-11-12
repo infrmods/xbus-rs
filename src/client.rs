@@ -1,8 +1,7 @@
-use hyper::client::Client as HttpClient;
-use hyper::client::pool::{Pool, Config as PoolConfig};
-use hyper::method::Method;
-use hyper::net::HttpsConnector;
-use hyper_native_tls::NativeTlsClient;
+use tokio_core::reactor::Handle;
+use hyper::client::{Client as HttpClient, HttpConnector};
+use hyper::Method;
+use hyper_tls::HttpsConnector;
 use native_tls::TlsConnector;
 use native_tls::backend::openssl::TlsConnectorBuilderExt;
 use openssl::x509::X509_FILETYPE_PEM;
@@ -11,6 +10,7 @@ use serde_yaml;
 use serde::Deserialize;
 use request::RequestBuilder;
 use error::Error;
+use futures::{Future, IntoFuture};
 
 const DEFAULT_IDLE: usize = 4;
 
@@ -46,11 +46,11 @@ impl Config {
 
 pub struct Client {
     config: Config,
-    client: HttpClient,
+    client: HttpClient<HttpsConnector<HttpConnector>>,
 }
 
 impl Client {
-    fn tls_client(config: &Config) -> Result<NativeTlsClient, Error> {
+    fn tls_connector(config: &Config) -> Result<TlsConnector, Error> {
         let mut tls_builder = TlsConnector::builder()?;
         {
             let builder = tls_builder.builder_mut().builder_mut();
@@ -65,42 +65,50 @@ impl Client {
                     .map_err(|e| Error::Ssl(format!("set private key({}) fail: {}", key, e)))?;
             }
         }
-        Ok(tls_builder.build()?.into())
+        Ok(tls_builder.build()?)
     }
 
-    pub fn new(config: Config) -> Result<Client, Error> {
-        let connector = HttpsConnector::new(Self::tls_client(&config)?);
-        let pool = Pool::with_connector(PoolConfig {
-                                            max_idle: config.max_idle_connections
-                                                .unwrap_or(DEFAULT_IDLE),
-                                        },
-                                        connector);
-        let http_client = HttpClient::with_connector(pool);
+    pub fn new(config: Config, handle: &Handle) -> Result<Client, Error> {
+        let mut http_connector = HttpConnector::new(4, handle);
+        http_connector.enforce_http(false);
+        let https_connector = HttpsConnector::from((http_connector, Self::tls_connector(&config)?));
+        let http_client = HttpClient::configure().connector(https_connector).build(handle);
         Ok(Client {
             config: config,
             client: http_client,
         })
     }
 
-    fn request<'a>(&'a self, method: Method, path: &'a str) -> RequestBuilder<'a> {
+    fn request<'a>(&'a self,
+                   method: Method,
+                   path: &'a str)
+                   -> RequestBuilder<'a, HttpsConnector<HttpConnector>> {
         RequestBuilder::new(&self.client, &self.config.endpoint, method, path)
     }
 
-    pub fn get(&self, key: &str) -> Result<Item, Error> {
-        self.request(Method::Get, &format!("/api/configs/{}", key))
+    pub fn get(&self, key: &str) -> Box<Future<Item = Item, Error = Error>> {
+        Box::new(self.request(Method::Get, &format!("/api/configs/{}", key))
             .send()
-            .map(|r: ItemResult| r.config)
+            .map(|r: ItemResult| r.config))
     }
 
-    pub fn get_all(&self, keys: &Vec<String>) -> Result<Vec<Item>, Error> {
-        let val = serde_json::to_string(keys)?;
-        self.request(Method::Get, "/api/configs")
+    pub fn get_all(&self, keys: &Vec<String>) -> Box<Future<Item = Vec<Item>, Error = Error>> {
+        let val = match serde_json::to_string(keys) {
+            Ok(v) => v,
+            Err(e) => {
+                return Box::new(Err(Error::from(e)).into_future());
+            }
+        };
+        Box::new(self.request(Method::Get, "/api/configs")
             .param("keys", &val)
             .send()
-            .map(|r: ItemsResult| r.configs)
+            .map(|r: ItemsResult| r.configs))
     }
 
-    pub fn get_service(&self, name: &str, version: &str) -> Result<ServiceResult, Error> {
+    pub fn get_service(&self,
+                       name: &str,
+                       version: &str)
+                       -> Box<Future<Item = ServiceResult, Error = Error>> {
         self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
             .send()
     }
@@ -110,8 +118,8 @@ impl Client {
                          version: &str,
                          revision: u64,
                          timeout: u64)
-                         -> Result<Option<ServiceResult>, Error> {
-        self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+                         -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
+        Box::new(self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
             .param("watch", "true")
             .param("revision", &format!("{}", revision))
             .param("timeout", &format!("{}", timeout))
@@ -123,7 +131,7 @@ impl Client {
                 } else {
                     Err(e)
                 }
-            })
+            }))
     }
 }
 

@@ -5,9 +5,11 @@ extern crate serde_json;
 extern crate serde_yaml;
 extern crate hyper;
 extern crate url;
-extern crate hyper_native_tls;
+extern crate hyper_tls;
 extern crate native_tls;
 extern crate openssl;
+extern crate tokio_core;
+extern crate futures;
 
 pub mod error;
 pub mod client;

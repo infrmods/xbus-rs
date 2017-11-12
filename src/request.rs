@@ -1,16 +1,15 @@
 use std::io::Read;
 use std::collections::HashMap;
-use hyper::client::Client as HttpClient;
-use hyper::method::Method;
-use hyper::status::StatusCode;
-use hyper::Url;
+use hyper::{Client as HttpClient, Method, Uri, StatusCode, Request, Chunk};
+use hyper::client::Connect;
 use serde::Deserialize;
-use serde_json::from_reader;
+use serde_json::from_slice;
 use error::Error;
+use futures::{Future, Stream, IntoFuture};
 
 
-pub struct RequestBuilder<'a> {
-    client: &'a HttpClient,
+pub struct RequestBuilder<'a, C: 'a + Connect> {
+    client: &'a HttpClient<C>,
     endpoint: &'a str,
     method: Method,
     path: &'a str,
@@ -18,12 +17,12 @@ pub struct RequestBuilder<'a> {
 }
 
 
-impl<'a> RequestBuilder<'a> {
-    pub fn new(client: &'a HttpClient,
+impl<'a, C: Connect> RequestBuilder<'a, C> {
+    pub fn new(client: &'a HttpClient<C>,
                endpoint: &'a str,
                method: Method,
                path: &'a str)
-               -> RequestBuilder<'a> {
+               -> RequestBuilder<'a, C> {
         RequestBuilder {
             client: client,
             endpoint: endpoint,
@@ -33,7 +32,7 @@ impl<'a> RequestBuilder<'a> {
         }
     }
 
-    pub fn param(mut self, name: &'a str, value: &'a str) -> RequestBuilder<'a> {
+    pub fn param(mut self, name: &'a str, value: &'a str) -> RequestBuilder<'a, C> {
         if let Some(ref mut params) = self.params {
             params.insert(name, value);
         } else {
@@ -44,27 +43,52 @@ impl<'a> RequestBuilder<'a> {
         self
     }
 
-    pub fn send<T>(self) -> Result<T, Error>
-        where for<'de> T: Deserialize<'de>
+    pub fn send<T>(self) -> Box<Future<Item = T, Error = Error>>
+        where for<'de> T: Deserialize<'de> + 'static
     {
         let mut url_str = self.endpoint.to_owned();
         url_str.push_str(self.path);
-        let mut url = try!(Url::parse(&url_str));
         if let Some(ref params) = self.params {
-            let mut pairs = url.query_pairs_mut();
-            for (k, v) in params {
-                pairs.append_pair(k, v);
+            if params.len() > 0 {
+                let ps =
+                    params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<String>>();
+                url_str.push('?');
+                url_str.push_str(&ps.join("&"))
             }
         }
-        let mut resp = try!(self.client.request(self.method, url).send());
-        if resp.status != StatusCode::Ok {
-            let mut msg = format!("[{}]", resp.status).to_owned();
-            try!(resp.read_to_string(&mut msg));
-            return Err(Error::from(msg));
-        }
-        let json_rep: Response<T> = try!(from_reader(resp));
-        json_rep.get()
+        let uri = match url_str.parse() {
+            Ok(u) => u,
+            Err(e) => {
+                return Box::new(Err(Error::from("invalid url")).into_future());
+            }
+        };
+        Box::new(self.client
+            .request(Request::new(self.method, uri))
+            .map_err(Error::from)
+            .and_then(|resp| {
+                let status = resp.status();
+                join_chunks(resp.body().map_err(Error::from)).and_then(move |body| {
+                    if status != StatusCode::Ok {
+                        let msg = format!("[{}]: {}", status, String::from_utf8_lossy(&body));
+                        return Err(Error::from(msg));
+                    }
+                    let json_rep: Response<T> = from_slice(&body)?;
+                    json_rep.get()
+                })
+            }))
     }
+}
+
+fn join_chunks<S: 'static>(s: S) -> Box<Future<Item = Vec<u8>, Error = Error>>
+    where S: Stream<Item = Chunk, Error = Error>
+{
+    Box::new(s.collect().map(|cs| {
+        let mut r = Vec::new();
+        for c in cs {
+            r.extend(c);
+        }
+        r
+    }))
 }
 
 

@@ -173,6 +173,10 @@ impl ServiceWatcher {
                 }
             })));
     }
+
+    pub fn close(&mut self) {
+        self.task = None;
+    }
 }
 
 impl Stream for ServiceWatcher {

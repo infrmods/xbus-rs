@@ -117,7 +117,7 @@ impl Client {
     pub fn watch_service(&self,
                          name: &str,
                          version: &str,
-                         revision: u64,
+                         revision: Option<u64>,
                          timeout: u64)
                          -> ServiceWatcher {
         ServiceWatcher::new(self, name, version, revision, timeout)
@@ -137,18 +137,22 @@ impl ServiceWatcher {
     fn new(client: &Client,
            name: &str,
            version: &str,
-           revision: u64,
+           revision: Option<u64>,
            timeout: u64)
            -> ServiceWatcher {
         let mut w = ServiceWatcher {
             client: client.clone(),
             name: name.into(),
             version: version.into(),
-            revision: revision,
+            revision: revision.unwrap_or(0),
             timeout: timeout,
             task: None,
         };
-        w.new_task();
+        if revision.is_some() {
+            w.new_task();
+        } else {
+            w.task = Some(Box::new(w.client.get_service(name, version).map(|s| Some(s))));
+        }
         w
     }
 

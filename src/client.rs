@@ -206,21 +206,21 @@ impl Stream for ServiceWatcher {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct ItemsResult {
     configs: Vec<Item>,
     #[allow(dead_code)]
     revision: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct ItemResult {
     config: Item,
     #[allow(dead_code)]
     revision: u64,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Item {
     pub name: String,
     pub value: String,
@@ -228,13 +228,13 @@ pub struct Item {
 }
 
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ServiceEndpoint {
     pub address: String,
     pub config: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Service {
     pub name: String,
     pub version: String,
@@ -246,7 +246,7 @@ pub struct Service {
     pub endpoints: Vec<ServiceEndpoint>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ServiceResult {
     pub service: Service,
     #[allow(dead_code)]

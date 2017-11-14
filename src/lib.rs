@@ -11,6 +11,8 @@ extern crate openssl;
 extern crate tokio_core;
 #[macro_use]
 extern crate futures;
+#[macro_use]
+extern crate log;
 
 pub mod error;
 pub mod client;

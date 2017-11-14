@@ -10,7 +10,11 @@ use serde_yaml;
 use serde::Deserialize;
 use request::RequestBuilder;
 use error::Error;
-use futures::{Future, IntoFuture, Stream, Poll, Async};
+use futures::prelude::*;
+use futures::future::{loop_fn, Loop};
+use futures::sync::mpsc;
+use tokio_core::reactor::Timeout;
+use std::time::Duration;
 
 const DEFAULT_THREADS: usize = 4;
 
@@ -47,6 +51,7 @@ impl Config {
 #[derive(Clone)]
 pub struct Client {
     config: Config,
+    handle: Handle,
     client: HttpClient<HttpsConnector<HttpConnector>>,
 }
 
@@ -76,6 +81,7 @@ impl Client {
         let http_client = HttpClient::configure().connector(https_connector).build(handle);
         Ok(Client {
             config: config,
+            handle: handle.clone(),
             client: http_client,
         })
     }
@@ -114,55 +120,16 @@ impl Client {
             .send()
     }
 
-    pub fn watch_service(&self,
-                         name: &str,
-                         version: &str,
-                         revision: Option<u64>,
-                         timeout: u64)
-                         -> ServiceWatcher {
-        ServiceWatcher::new(self, name, version, revision, timeout)
-    }
-}
-
-pub struct ServiceWatcher {
-    client: Client,
-    name: String,
-    version: String,
-    revision: u64,
-    timeout: u64,
-    task: Option<Box<Future<Item = Option<ServiceResult>, Error = Error>>>,
-}
-
-impl ServiceWatcher {
-    fn new(client: &Client,
-           name: &str,
-           version: &str,
-           revision: Option<u64>,
-           timeout: u64)
-           -> ServiceWatcher {
-        let mut w = ServiceWatcher {
-            client: client.clone(),
-            name: name.into(),
-            version: version.into(),
-            revision: revision.unwrap_or(0),
-            timeout: timeout,
-            task: None,
-        };
-        if revision.is_some() {
-            w.new_task();
-        } else {
-            w.task = Some(Box::new(w.client.get_service(name, version).map(|s| Some(s))));
-        }
-        w
-    }
-
-    fn new_task(&mut self) {
-        self.task = Some(Box::new(self.client
-            .request(Method::Get,
-                     &format!("/api/services/{}/{}", &self.name, &self.version))
+    pub fn watch_service_once(&self,
+                              name: &str,
+                              version: &str,
+                              revision: Option<u64>,
+                              timeout: u64)
+                              -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
+        Box::new(self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
             .param("watch", "true")
-            .param("revision", &format!("{}", self.revision))
-            .param("timeout", &format!("{}", &self.timeout))
+            .param("revision", &format!("{}", revision.unwrap_or(0)))
+            .param("timeout", &format!("{}", timeout))
             .send()
             .and_then(|r| Ok(Some(r)))
             .or_else(|e| {
@@ -171,38 +138,46 @@ impl ServiceWatcher {
                 } else {
                     Err(e)
                 }
-            })));
+            }))
     }
 
-    pub fn close(&mut self) {
-        self.task = None;
-    }
-}
-
-impl Stream for ServiceWatcher {
-    type Item = ServiceResult;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut try_poll = true;
-        let r = if let Some(ref mut task) = self.task {
-            match try_ready!(task.poll()) {
-                Some(result) => {
-                    self.revision = result.revision + 1;
-                    try_poll = false;
-                    Ok(Async::Ready(Some(result)))
-                }
-                None => Ok(Async::NotReady),
-            }
-        } else {
-            return Ok(Async::Ready(None));
-        };
-
-        self.new_task();
-        if try_poll {
-            return self.poll();
-        }
-        r
+    pub fn watch_service(&self,
+                         name: &str,
+                         version: &str,
+                         revision: Option<u64>,
+                         timeout: u64)
+                         -> mpsc::UnboundedReceiver<ServiceResult> {
+        let (name, version) = (name.to_string(), version.to_string());
+        let (tx, rx) = mpsc::unbounded();
+        self.handle.spawn(loop_fn((self.clone(), revision), move |(client, revision)| {
+            let (name, version) = (name.clone(), version.clone());
+            let tx = tx.clone();
+            let h = client.handle.clone();
+            client.watch_service_once(&name, &version, revision, timeout)
+                .or_else(move |e| {
+                    error!("watch service({}:{}) error: {}", &name, &version, e);
+                    Timeout::new(Duration::from_secs(5), &h)
+                        .expect("create timeout fail")
+                        .map(|_| None)
+                        .or_else(|e| {
+                            error!("poll watch err timeout fail: {}", e);
+                            Ok(None)
+                        })
+                })
+                .and_then(move |result| {
+                    match result {
+                        Some(service_result) => {
+                            let revision = service_result.revision + 1;
+                            if tx.unbounded_send(service_result).is_err() {
+                                return Ok(Loop::Break(()));
+                            }
+                            Ok(Loop::Continue((client, Some(revision))))
+                        }
+                        None => Ok(Loop::Continue((client, revision))),
+                    }
+                })
+        }));
+        rx
     }
 }
 

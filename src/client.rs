@@ -123,12 +123,12 @@ impl Client {
     pub fn watch_service_once(&self,
                               name: &str,
                               version: &str,
-                              revision: Option<u64>,
+                              revision: u64,
                               timeout: u64)
                               -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
         Box::new(self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
             .param("watch", "true")
-            .param("revision", &format!("{}", revision.unwrap_or(0)))
+            .param("revision", &format!("{}", revision))
             .param("timeout", &format!("{}", timeout))
             .send()
             .and_then(|r| Ok(Some(r)))
@@ -153,7 +153,10 @@ impl Client {
             let (name, version) = (name.clone(), version.clone());
             let tx = tx.clone();
             let h = client.handle.clone();
-            client.watch_service_once(&name, &version, revision, timeout)
+            match revision {
+                    Some(rev) => client.watch_service_once(&name, &version, rev, timeout),
+                    None => Box::new(client.get_service(&name, &version).map(Some)),
+                }
                 .or_else(move |e| {
                     error!("watch service({}:{}) error: {}", &name, &version, e);
                     Timeout::new(Duration::from_secs(5), &h)

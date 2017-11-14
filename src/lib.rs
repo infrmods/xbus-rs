@@ -9,7 +9,6 @@ extern crate hyper_tls;
 extern crate native_tls;
 extern crate openssl;
 extern crate tokio_core;
-#[macro_use]
 extern crate futures;
 #[macro_use]
 extern crate log;

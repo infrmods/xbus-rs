@@ -21,10 +21,10 @@ const DEFAULT_THREADS: usize = 4;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
-    endpoint: String,
-    ca_file: Option<String>,
-    cert_key_file: Option<(String, String)>,
-    max_idle_connections: Option<usize>,
+    pub endpoint: String,
+    pub ca_file: Option<String>,
+    pub cert_key_file: Option<(String, String)>,
+    pub max_idle_connections: Option<usize>,
 }
 
 impl Config {

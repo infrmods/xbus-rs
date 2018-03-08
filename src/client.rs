@@ -18,7 +18,6 @@ use std::time::Duration;
 
 const DEFAULT_THREADS: usize = 4;
 
-
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
     pub endpoint: String,
@@ -61,13 +60,16 @@ impl Client {
         {
             let builder = tls_builder.builder_mut().builder_mut();
             if let Some(ref path) = config.ca_file {
-                builder.set_ca_file(path)
+                builder
+                    .set_ca_file(path)
                     .map_err(|e| Error::Ssl(format!("set cacert({}) fail: {}", path, e)))?;
             }
             if let Some((ref cert, ref key)) = config.cert_key_file {
-                builder.set_certificate_file(cert, X509_FILETYPE_PEM)
+                builder
+                    .set_certificate_file(cert, X509_FILETYPE_PEM)
                     .map_err(|e| Error::Ssl(format!("set cert({}) fail: {}", cert, e)))?;
-                builder.set_private_key_file(key, X509_FILETYPE_PEM)
+                builder
+                    .set_private_key_file(key, X509_FILETYPE_PEM)
                     .map_err(|e| Error::Ssl(format!("set private key({}) fail: {}", key, e)))?;
             }
         }
@@ -78,7 +80,9 @@ impl Client {
         let mut http_connector = HttpConnector::new(DEFAULT_THREADS, handle);
         http_connector.enforce_http(false);
         let https_connector = HttpsConnector::from((http_connector, Self::tls_connector(&config)?));
-        let http_client = HttpClient::configure().connector(https_connector).build(handle);
+        let http_client = HttpClient::configure()
+            .connector(https_connector)
+            .build(handle);
         Ok(Client {
             config: config,
             handle: handle.clone(),
@@ -86,17 +90,20 @@ impl Client {
         })
     }
 
-    fn request<'a>(&'a self,
-                   method: Method,
-                   path: &'a str)
-                   -> RequestBuilder<'a, HttpsConnector<HttpConnector>> {
+    fn request<'a>(
+        &'a self,
+        method: Method,
+        path: &'a str,
+    ) -> RequestBuilder<'a, HttpsConnector<HttpConnector>> {
         RequestBuilder::new(&self.client, &self.config.endpoint, method, path)
     }
 
     pub fn get(&self, key: &str) -> Box<Future<Item = Item, Error = Error>> {
-        Box::new(self.request(Method::Get, &format!("/api/configs/{}", key))
-            .send()
-            .map(|r: ItemResult| r.config))
+        Box::new(
+            self.request(Method::Get, &format!("/api/configs/{}", key))
+                .send()
+                .map(|r: ItemResult| r.config),
+        )
     }
 
     pub fn get_all(&self, keys: &Vec<String>) -> Box<Future<Item = Vec<Item>, Error = Error>> {
@@ -106,58 +113,111 @@ impl Client {
                 return Box::new(Err(Error::from(e)).into_future());
             }
         };
-        Box::new(self.request(Method::Get, "/api/configs")
-            .param("keys", &val)
-            .send()
-            .map(|r: ItemsResult| r.configs))
+        Box::new(
+            self.request(Method::Get, "/api/configs")
+                .param("keys", &val)
+                .send()
+                .map(|r: ItemsResult| r.configs),
+        )
     }
 
-    pub fn get_service(&self,
-                       name: &str,
-                       version: &str)
-                       -> Box<Future<Item = ServiceResult, Error = Error>> {
+    pub fn get_service(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Box<Future<Item = ServiceResult, Error = Error>> {
         self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
             .send()
     }
 
-    pub fn watch_service_once(&self,
-                              name: &str,
-                              version: &str,
-                              revision: u64,
-                              timeout: u64)
-                              -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
-        Box::new(self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
-            .param("watch", "true")
-            .param("revision", &format!("{}", revision))
-            .param("timeout", &format!("{}", timeout))
-            .send()
-            .and_then(|r| Ok(Some(r)))
-            .or_else(|e| {
-                if e.is_timeout() {
-                    Ok(None)
-                } else {
-                    Err(e)
-                }
-            }))
+    pub fn plug_service(
+        &self,
+        service: &Service,
+        endpoint: &ServiceEndpoint,
+        ttl: Option<i64>,
+    ) -> Box<Future<Item = PlugResult, Error = Error>> {
+        self.request(
+            Method::Post,
+            &format!("/api/services/{}/{}", &service.name, &service.version),
+        ).send_with_body(PlugRequest {
+            ttl: ttl,
+            desc: service.clone(),
+            endpoint: endpoint.clone(),
+        })
     }
 
-    pub fn watch_service(&self,
-                         name: &str,
-                         version: &str,
-                         revision: Option<u64>,
-                         timeout: u64)
-                         -> mpsc::UnboundedReceiver<ServiceResult> {
+    pub fn plug_all_services(
+        &self,
+        services: &[Service],
+        endpoint: &ServiceEndpoint,
+        ttl: Option<i64>,
+    ) -> Box<Future<Item = PlugResult, Error = Error>> {
+        self.request(Method::Post, "/api/services")
+            .send_with_body(PlugAllRequest {
+                ttl: ttl,
+                desces: services,
+                endpoint: endpoint.clone(),
+            })
+    }
+
+    pub fn unplug_service(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Box<Future<Item = (), Error = Error>> {
+        self.request(
+            Method::Delete,
+            &format!("/api/service/{}/{}", name, version),
+        ).send()
+    }
+
+    pub fn keepalive_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
+        self.request(Method::Post, &format!("/api/leases/{}", lease_id))
+            .send()
+    }
+
+    pub fn revoke_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
+        self.request(Method::Delete, &format!("/api/leases/{}", lease_id))
+            .send()
+    }
+
+    pub fn watch_service_once(
+        &self,
+        name: &str,
+        version: &str,
+        revision: u64,
+        timeout: u64,
+    ) -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
+        Box::new(
+            self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+                .param("watch", "true")
+                .param("revision", &format!("{}", revision))
+                .param("timeout", &format!("{}", timeout))
+                .send()
+                .and_then(|r| Ok(Some(r)))
+                .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
+        )
+    }
+
+    pub fn watch_service(
+        &self,
+        name: &str,
+        version: &str,
+        revision: Option<u64>,
+        timeout: u64,
+    ) -> mpsc::UnboundedReceiver<ServiceResult> {
         let (name, version) = (name.to_string(), version.to_string());
         let (tx, rx) = mpsc::unbounded();
-        self.handle.spawn(loop_fn((self.clone(), revision), move |(client, revision)| {
-            let (name, version) = (name.clone(), version.clone());
-            let tx = tx.clone();
-            let h = client.handle.clone();
-            match revision {
+        self.handle.spawn(loop_fn(
+            (self.clone(), revision),
+            move |(client, revision)| {
+                let (name, version) = (name.clone(), version.clone());
+                let tx = tx.clone();
+                let h = client.handle.clone();
+                match revision {
                     Some(rev) => client.watch_service_once(&name, &version, rev, timeout),
                     None => Box::new(client.get_service(&name, &version).map(Some)),
-                }
-                .or_else(move |e| {
+                }.or_else(move |e| {
                     error!("watch service({}:{}) error: {}", &name, &version, e);
                     Timeout::new(Duration::from_secs(5), &h)
                         .expect("create timeout fail")
@@ -167,8 +227,7 @@ impl Client {
                             Ok(None)
                         })
                 })
-                .and_then(move |result| {
-                    match result {
+                    .and_then(move |result| match result {
                         Some(service_result) => {
                             let revision = service_result.revision + 1;
                             if tx.unbounded_send(service_result).is_err() {
@@ -177,9 +236,9 @@ impl Client {
                             Ok(Loop::Continue((client, Some(revision))))
                         }
                         None => Ok(Loop::Continue((client, revision))),
-                    }
-                })
-        }));
+                    })
+            },
+        ));
         rx
     }
 }
@@ -205,14 +264,13 @@ pub struct Item {
     pub version: u64,
 }
 
-
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceEndpoint {
     pub address: String,
     pub config: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Service {
     pub name: String,
     pub version: String,
@@ -231,15 +289,37 @@ pub struct ServiceResult {
     pub revision: u64,
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct PlugRequest {
+    pub ttl: Option<i64>,
+    pub desc: Service,
+    pub endpoint: ServiceEndpoint,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct PlugAllRequest<'a> {
+    pub ttl: Option<i64>,
+    pub desces: &'a [Service],
+    pub endpoint: ServiceEndpoint,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PlugResult {
+    pub lease_id: i64,
+    pub ttl: i64,
+}
+
 impl Item {
     pub fn json<T>(&self) -> Result<T, serde_json::Error>
-        where for<'de> T: Deserialize<'de>
+    where
+        for<'de> T: Deserialize<'de>,
     {
         serde_json::from_str(&self.value)
     }
 
     pub fn yaml<T>(&self) -> Result<T, serde_yaml::Error>
-        where for<'de> T: Deserialize<'de>
+    where
+        for<'de> T: Deserialize<'de>,
     {
         serde_yaml::from_str(&self.value)
     }

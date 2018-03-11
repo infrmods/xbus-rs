@@ -129,6 +129,7 @@ where
 struct RespError {
     pub code: String,
     pub message: Option<String>,
+    pub not_permitted_keys: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -147,10 +148,19 @@ impl<T> Response<T> {
             }
         } else {
             match self.error {
-                Some(err) => Err(Error::Request(
-                    err.code,
-                    err.message.unwrap_or("".to_owned()),
-                )),
+                Some(err) => {
+                    if err.code == "NOT_PERMITTED" {
+                        Err(Error::NotPermitted(
+                            err.message.unwrap_or("".to_owned()),
+                            err.not_permitted_keys.unwrap_or(Vec::new()),
+                        ))
+                    } else {
+                        Err(Error::Request(
+                            err.code,
+                            err.message.unwrap_or("".to_owned()),
+                        ))
+                    }
+                }
                 None => Err(Error::from("missing error")),
             }
         }

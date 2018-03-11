@@ -150,11 +150,13 @@ impl Client {
         &self,
         services: &[Service],
         endpoint: &ServiceEndpoint,
+        lease_id: Option<i64>,
         ttl: Option<i64>,
     ) -> Box<Future<Item = PlugResult, Error = Error>> {
         self.request(Method::Post, "/api/services")
             .send_with_body(PlugAllRequest {
                 ttl: ttl,
+                lease_id: lease_id,
                 desces: services,
                 endpoint: endpoint.clone(),
             })
@@ -169,6 +171,19 @@ impl Client {
             Method::Delete,
             &format!("/api/service/{}/{}", name, version),
         ).send()
+    }
+
+    pub fn grant_lease(
+        &self,
+        ttl: Option<i64>,
+    ) -> Box<Future<Item = LeaseGrantResult, Error = Error>> {
+        let ttl = ttl.map(|n| format!("{}", n));
+        let ttl = ttl.as_ref();
+        let mut req = self.request(Method::Post, "/api/leases");
+        if let Some(ttl) = ttl {
+            req = req.param("ttl", ttl);
+        }
+        req.send()
     }
 
     pub fn keepalive_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
@@ -289,6 +304,12 @@ pub struct ServiceResult {
     pub revision: u64,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct LeaseGrantResult {
+    pub lease_id: i64,
+    pub ttl: i64,
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct PlugRequest {
     pub ttl: Option<i64>,
@@ -299,6 +320,7 @@ pub struct PlugRequest {
 #[derive(Serialize, Debug, Clone)]
 pub struct PlugAllRequest<'a> {
     pub ttl: Option<i64>,
+    pub lease_id: Option<i64>,
     pub desces: &'a [Service],
     pub endpoint: ServiceEndpoint,
 }

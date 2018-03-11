@@ -14,6 +14,7 @@ pub enum Error {
     Ssl(String),
     Serialize(String),
     Request(String, String),
+    NotPermitted(String, Vec<String>),
     Other(String),
 }
 
@@ -47,6 +48,7 @@ impl Display for Error {
             Error::Request(ref code, ref message) => {
                 write!(f, "request fail[{}]: {}", code, message)
             }
+            Error::NotPermitted(ref message, _) => write!(f, "not permitted: {}", message),
             Error::Other(ref e) => write!(f, "{}", e),
         }
     }
@@ -60,6 +62,7 @@ impl StdError for Error {
             Error::Ssl(ref e) => e,
             Error::Serialize(ref e) => e,
             Error::Request(_, ref message) => message,
+            Error::NotPermitted(ref message, _) => message,
             Error::Other(ref e) => e,
         }
     }

@@ -129,7 +129,7 @@ where
 struct RespError {
     pub code: String,
     pub message: Option<String>,
-    pub not_permitted_keys: Option<Vec<String>>,
+    pub keys: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -152,7 +152,7 @@ impl<T> Response<T> {
                     if err.code == "NOT_PERMITTED" {
                         Err(Error::NotPermitted(
                             err.message.unwrap_or("".to_owned()),
-                            err.not_permitted_keys.unwrap_or(Vec::new()),
+                            err.keys.unwrap_or(Vec::new()),
                         ))
                     } else {
                         Err(Error::Request(

@@ -36,6 +36,20 @@ impl Error {
         }
         return false;
     }
+
+    pub fn can_retry(&self) -> bool {
+        match *self {
+            Error::Ssl(_) => false,
+            Error::Serialize(_) => false,
+            Error::Request(ref code, _) => match code.as_str() {
+                "SYSTEM_ERROR" | "TOO_MANY_ATTEMPTS" | "DEADLINE_EXCEEDED" | "CANCELLED" => true,
+                _ => false,
+            },
+            Error::NotPermitted(_, _) => false,
+            Error::Other(_) => false,
+            _ => true,
+        }
+    }
 }
 
 impl Display for Error {

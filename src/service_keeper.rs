@@ -29,7 +29,7 @@ impl ServiceKeeper {
         endpoint: ServiceEndpoint,
     ) -> ServiceKeeper {
         let (tx, rx) = mpsc::unbounded();
-        handle.spawn(KeepTask::new(client, handle, rx, ttl, endpoint));
+        handle.spawn(KeepTask::new(client, handle, tx.clone(), rx, ttl, endpoint));
         ServiceKeeper { cmd_tx: tx }
     }
 
@@ -56,11 +56,13 @@ struct KeepTask {
     ttl: Option<i64>,
     endpoint: ServiceEndpoint,
     handle: Handle,
+    cmd_tx: mpsc::UnboundedSender<Cmd>,
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
     services: HashMap<(String, String), Service>,
     lease_result: Option<LeaseGrantResult>,
     lease_future: Option<Box<Future<Item = LeaseGrantResult, Error = Error>>>,
     replug_future: Option<Box<Future<Item = PlugResult, Error = Error>>>,
+    replug_backs: HashMap<(String, String), oneshot::Sender<Result<(), Error>>>,
     lease_keep_future: Option<Box<Future<Item = (), Error = Error>>>,
 }
 
@@ -68,6 +70,7 @@ impl KeepTask {
     fn new(
         client: &Client,
         handle: &Handle,
+        cmd_tx: mpsc::UnboundedSender<Cmd>,
         cmd_rx: mpsc::UnboundedReceiver<Cmd>,
         ttl: Option<i64>,
         endpoint: ServiceEndpoint,
@@ -78,10 +81,12 @@ impl KeepTask {
             endpoint: endpoint,
             handle: handle.clone(),
             services: HashMap::new(),
+            cmd_tx: cmd_tx,
             cmd_rx: cmd_rx,
             lease_result: None,
             lease_future: None,
             replug_future: None,
+            replug_backs: HashMap::new(),
             lease_keep_future: None,
         }
     }
@@ -140,6 +145,31 @@ impl KeepTask {
             error!("missing lease result");
         }
     }
+
+    fn plug_one(&mut self, service: Service, tx: oneshot::Sender<Result<(), Error>>) {
+        if let Some(ref lease_result) = self.lease_result {
+            let cmd_tx = self.cmd_tx.clone();
+            self.handle.spawn(
+                self.client
+                    .plug_service(&service, &self.endpoint, None, Some(lease_result.lease_id))
+                    .then(move |r| {
+                        Ok(match r {
+                            Ok(_) => {
+                                let _ = tx.send(Ok(()));
+                            }
+                            Err(e) => {
+                                if !e.can_retry() {
+                                    let _ = cmd_tx.send(Cmd::Cancel(service.name, service.version));
+                                }
+                                let _ = tx.send(Err(e));
+                            }
+                        })
+                    }),
+            );
+        } else {
+            error!("missing lease result");
+        }
+    }
 }
 
 impl Future for KeepTask {
@@ -165,6 +195,9 @@ impl Future for KeepTask {
             match r {
                 Ok(Async::Ready(_)) => {
                     self.replug_future = None;
+                    for (_, sender) in self.replug_backs.drain() {
+                        let _ = sender.send(Ok(()));
+                    }
                 }
                 Err(Error::NotPermitted(_, names)) => {
                     let set: HashSet<String> = HashSet::from_iter(names);
@@ -176,6 +209,16 @@ impl Future for KeepTask {
                             true
                         }
                     });
+                    let keys: Vec<(String, String)> = self.replug_backs
+                        .keys()
+                        .filter(|k| set.contains(&k.0))
+                        .map(|k| k.clone())
+                        .collect();
+                    for k in keys {
+                        let _ = self.replug_backs.remove(&k).unwrap().send(Err(
+                            Error::NotPermitted("not permitted".to_owned(), vec![k.0]),
+                        ));
+                    }
                     self.replug_all(false);
                 }
                 Err(e) => {
@@ -202,13 +245,32 @@ impl Future for KeepTask {
             if let Some(cmd) = try_ready!(self.cmd_rx.poll()) {
                 match cmd {
                     Cmd::Plug(service, tx) => {
-                        //
+                        let key = (service.name.clone(), service.version.clone());
+                        if self.services.contains_key(&key) {
+                            let _ = tx.send(Err(Error::Other(format!(
+                                "{}:{} has beed plugged",
+                                key.0, key.1
+                            ))));
+                        } else if self.lease_result.is_some() {
+                            self.services.insert(key, service.clone());
+                            self.plug_one(service, tx);
+                        } else {
+                            self.services.insert(key.clone(), service.clone());
+                            self.replug_backs.insert(key, tx);
+                            if self.lease_future.is_none() {
+                                self.new_lease(false)
+                            }
+                        }
                     }
                     Cmd::Unplug(name, version) => {
-                        //
+                        let key = (name, version);
+                        self.services.remove(&key);
+                        self.replug_backs.remove(&key);
                     }
                     Cmd::Cancel(name, version) => {
-                        //
+                        let key = (name, version);
+                        self.services.remove(&key);
+                        self.replug_backs.remove(&key);
                     }
                 }
             } else {

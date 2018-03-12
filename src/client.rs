@@ -15,6 +15,7 @@ use futures::future::{loop_fn, Loop};
 use futures::sync::mpsc;
 use tokio_core::reactor::Timeout;
 use std::time::Duration;
+use service_keeper::ServiceKeeper;
 
 const DEFAULT_THREADS: usize = 4;
 
@@ -135,12 +136,14 @@ impl Client {
         service: &Service,
         endpoint: &ServiceEndpoint,
         ttl: Option<i64>,
+        lease_id: Option<i64>,
     ) -> Box<Future<Item = PlugResult, Error = Error>> {
         self.request(
             Method::Post,
             &format!("/api/services/{}/{}", &service.name, &service.version),
         ).send_with_body(PlugRequest {
             ttl: ttl,
+            lease_id: lease_id,
             desc: service.clone(),
             endpoint: endpoint.clone(),
         })
@@ -256,6 +259,10 @@ impl Client {
         ));
         rx
     }
+
+    pub fn service_keeper(&self, ttl: Option<i64>, endpoint: ServiceEndpoint) -> ServiceKeeper {
+        ServiceKeeper::new(&self, &self.handle, ttl, endpoint)
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -313,6 +320,7 @@ pub struct LeaseGrantResult {
 #[derive(Serialize, Debug, Clone)]
 pub struct PlugRequest {
     pub ttl: Option<i64>,
+    pub lease_id: Option<i64>,
     pub desc: Service,
     pub endpoint: ServiceEndpoint,
 }

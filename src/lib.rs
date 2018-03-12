@@ -23,3 +23,4 @@ mod service_keeper;
 pub use error::Error;
 pub use client::Config;
 pub use client::Client;
+pub use service_keeper::ServiceKeeper;

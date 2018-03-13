@@ -177,73 +177,9 @@ impl Future for KeepTask {
     type Error = ();
 
     fn poll(&mut self) -> Poll<(), ()> {
-        if let Some(r) = self.lease_future.as_mut().map(|f| f.poll()) {
-            match r {
-                Ok(Async::Ready(result)) => {
-                    self.lease_future = None;
-                    self.lease_result = Some(result);
-                    self.replug_all(false);
-                }
-                Err(e) => {
-                    error!("grant lease fail: {}", e);
-                    self.new_lease(true);
-                }
-                _ => {}
-            }
-        }
-        if let Some(r) = self.replug_future.as_mut().map(|f| f.poll()) {
-            match r {
-                Ok(Async::Ready(_)) => {
-                    self.replug_future = None;
-                    for (_, sender) in self.replug_backs.drain() {
-                        let _ = sender.send(Ok(()));
-                    }
-                }
-                Err(Error::NotPermitted(_, names)) => {
-                    let set: HashSet<String> = HashSet::from_iter(names);
-                    self.services.retain(|k, _| {
-                        if set.contains(&k.0) {
-                            error!("plug service not permitted: {}:{}", k.0, k.1);
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    let keys: Vec<(String, String)> = self.replug_backs
-                        .keys()
-                        .filter(|k| set.contains(&k.0))
-                        .map(|k| k.clone())
-                        .collect();
-                    for k in keys {
-                        let _ = self.replug_backs.remove(&k).unwrap().send(Err(
-                            Error::NotPermitted("not permitted".to_owned(), vec![k.0]),
-                        ));
-                    }
-                    self.replug_all(false);
-                }
-                Err(e) => {
-                    error!("replug fail: {}", e);
-                    self.replug_all(true);
-                }
-                _ => {}
-            }
-        }
-        if let Some(r) = self.lease_keep_future.as_mut().map(|f| f.poll()) {
-            match r {
-                Ok(Async::Ready(_)) => {
-                    self.lease_keep_future = None;
-                    self.keep_lease();
-                }
-                Err(e) => {
-                    error!("keep lease fail: {}", e);
-                    self.new_lease(false);
-                }
-                _ => {}
-            }
-        }
         loop {
-            if let Some(cmd) = try_ready!(self.cmd_rx.poll()) {
-                match cmd {
+            match self.cmd_rx.poll() {
+                Ok(Async::Ready(Some(cmd))) => match cmd {
                     Cmd::Plug(service, tx) => {
                         let key = (service.name.clone(), service.version.clone());
                         if self.services.contains_key(&key) {
@@ -272,10 +208,90 @@ impl Future for KeepTask {
                         self.services.remove(&key);
                         self.replug_backs.remove(&key);
                     }
+                },
+                Ok(Async::NotReady) => {
+                    break;
                 }
-            } else {
-                return Ok(Async::Ready(()));
+                _ => {
+                    return Ok(Async::Ready(()));
+                }
             }
         }
+        let mut ct = true;
+        while ct {
+            ct = false;
+            if let Some(r) = self.lease_future.as_mut().map(|f| f.poll()) {
+                match r {
+                    Ok(Async::Ready(result)) => {
+                        self.lease_future = None;
+                        self.lease_result = Some(result);
+                        self.keep_lease();
+                        self.replug_all(false);
+                        ct = true;
+                    }
+                    Err(e) => {
+                        self.new_lease(true);
+                        ct = true;
+                        error!("grant lease fail: {}", e);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(r) = self.replug_future.as_mut().map(|f| f.poll()) {
+                match r {
+                    Ok(Async::Ready(_)) => {
+                        self.replug_future = None;
+                        for (_, sender) in self.replug_backs.drain() {
+                            let _ = sender.send(Ok(()));
+                        }
+                    }
+                    Err(Error::NotPermitted(_, names)) => {
+                        let set: HashSet<String> = HashSet::from_iter(names);
+                        self.services.retain(|k, _| {
+                            if set.contains(&k.0) {
+                                error!("plug service not permitted: {}:{}", k.0, k.1);
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        let keys: Vec<(String, String)> = self.replug_backs
+                            .keys()
+                            .filter(|k| set.contains(&k.0))
+                            .map(|k| k.clone())
+                            .collect();
+                        for k in keys {
+                            let _ = self.replug_backs.remove(&k).unwrap().send(Err(
+                                Error::NotPermitted("not permitted".to_owned(), vec![k.0]),
+                            ));
+                        }
+                        self.replug_all(false);
+                        ct = true;
+                    }
+                    Err(e) => {
+                        error!("replug fail: {}", e);
+                        self.replug_all(true);
+                        ct = true;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(r) = self.lease_keep_future.as_mut().map(|f| f.poll()) {
+                match r {
+                    Ok(Async::Ready(_)) => {
+                        self.lease_keep_future = None;
+                        self.keep_lease();
+                        ct = true;
+                    }
+                    Err(e) => {
+                        error!("keep lease fail: {}", e);
+                        self.new_lease(false);
+                        ct = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(Async::NotReady)
     }
 }

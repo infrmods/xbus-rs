@@ -67,7 +67,7 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
         self.send()
     }
 
-    pub fn send<T>(self) -> Box<Future<Item = T, Error = Error>>
+    fn get_response<T>(self) -> Box<Future<Item = Response<T>, Error = Error>>
     where
         for<'de> T: Deserialize<'de> + 'static,
     {
@@ -105,10 +105,21 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
                             return Err(Error::from(msg));
                         }
                         let json_rep: Response<T> = from_slice(&body)?;
-                        json_rep.get()
+                        Ok(json_rep)
                     })
                 }),
         )
+    }
+
+    pub fn send<T>(self) -> Box<Future<Item = T, Error = Error>>
+    where
+        for<'de> T: Deserialize<'de> + 'static,
+    {
+        Box::new(self.get_response().and_then(|resp| resp.get()))
+    }
+
+    pub fn get_ok(self) -> Box<Future<Item = (), Error = Error>> {
+        Box::new(self.get_response::<()>().and_then(|resp| resp.get_ok()))
     }
 }
 
@@ -140,6 +151,30 @@ struct Response<T> {
 }
 
 impl<T> Response<T> {
+    fn get_ok(self) -> Result<(), Error> {
+        if self.ok {
+            Ok(())
+        } else {
+            Err(Self::convert_err(self.error))
+        }
+    }
+
+    fn convert_err(error: Option<RespError>) -> Error {
+        match error {
+            Some(err) => {
+                if err.code == "NOT_PERMITTED" {
+                    Error::NotPermitted(
+                        err.message.unwrap_or("".to_owned()),
+                        err.keys.unwrap_or(Vec::new()),
+                    )
+                } else {
+                    Error::Request(err.code, err.message.unwrap_or("".to_owned()))
+                }
+            }
+            None => Error::from("missing error"),
+        }
+    }
+
     fn get(self) -> Result<T, Error> {
         if self.ok {
             match self.result {
@@ -147,22 +182,7 @@ impl<T> Response<T> {
                 None => Err(Error::from("missing result")),
             }
         } else {
-            match self.error {
-                Some(err) => {
-                    if err.code == "NOT_PERMITTED" {
-                        Err(Error::NotPermitted(
-                            err.message.unwrap_or("".to_owned()),
-                            err.keys.unwrap_or(Vec::new()),
-                        ))
-                    } else {
-                        Err(Error::Request(
-                            err.code,
-                            err.message.unwrap_or("".to_owned()),
-                        ))
-                    }
-                }
-                None => Err(Error::from("missing error")),
-            }
+            Err(Self::convert_err(self.error))
         }
     }
 }

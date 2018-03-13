@@ -173,7 +173,7 @@ impl Client {
         self.request(
             Method::Delete,
             &format!("/api/service/{}/{}", name, version),
-        ).send()
+        ).get_ok()
     }
 
     pub fn grant_lease(
@@ -191,12 +191,12 @@ impl Client {
 
     pub fn keepalive_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
         self.request(Method::Post, &format!("/api/leases/{}", lease_id))
-            .send()
+            .get_ok()
     }
 
     pub fn revoke_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
         self.request(Method::Delete, &format!("/api/leases/{}", lease_id))
-            .send()
+            .get_ok()
     }
 
     pub fn watch_service_once(

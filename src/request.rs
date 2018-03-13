@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use hyper::{Body, Chunk, Client as HttpClient, Method, Request, StatusCode};
 use hyper::client::Connect;
+use hyper::header::{ContentType, Header, Headers};
+use mime::{APPLICATION_JSON, APPLICATION_WWW_FORM_URLENCODED};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_string as to_json};
 use error::Error;
 use futures::{Future, IntoFuture, Stream};
+use url::form_urlencoded;
 
 pub struct RequestBuilder<'a, C: 'a + Connect> {
     client: &'a HttpClient<C>,
@@ -13,6 +16,7 @@ pub struct RequestBuilder<'a, C: 'a + Connect> {
     path: &'a str,
     params: Option<HashMap<&'a str, &'a str>>,
     body: Option<Body>,
+    headers: Option<Headers>,
 }
 
 impl<'a, C: Connect> RequestBuilder<'a, C> {
@@ -29,6 +33,7 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
             path: path,
             params: None,
             body: None,
+            headers: None,
         }
     }
 
@@ -48,6 +53,22 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
         self
     }
 
+    pub fn form(mut self, form: Form) -> RequestBuilder<'a, C> {
+        self.body = Some(form.into());
+        self.set_header(ContentType(APPLICATION_WWW_FORM_URLENCODED));
+        self
+    }
+
+    fn set_header<H: Header>(&mut self, header: H) {
+        if let Some(ref mut headers) = self.headers {
+            headers.set(header);
+        } else {
+            let mut headers = Headers::new();
+            headers.set(header);
+            self.headers = Some(headers);
+        }
+    }
+
     pub fn send_with_body<T, B: Serialize>(
         mut self,
         body: B,
@@ -63,6 +84,7 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
                 );
             }
         };
+        self.set_header(ContentType(APPLICATION_JSON));
         self.body = Some(data.into());
         self.send()
     }
@@ -92,6 +114,9 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
         let mut request = Request::new(self.method, uri);
         if let Some(body) = self.body {
             request.set_body(body);
+        }
+        if let Some(ref headers) = self.headers {
+            request.headers_mut().extend(headers.iter());
         }
         Box::new(
             self.client
@@ -184,5 +209,50 @@ impl<T> Response<T> {
         } else {
             Err(Self::convert_err(self.error))
         }
+    }
+}
+
+pub struct Form {
+    serializer: form_urlencoded::Serializer<String>,
+}
+
+impl Form {
+    pub fn new() -> Form {
+        Form {
+            serializer: form_urlencoded::Serializer::new(String::new()),
+        }
+    }
+
+    pub fn set<T: Serialize>(&mut self, name: &str, v: T) -> Result<(), Error> {
+        let mut data = match to_json(&v) {
+            Ok(x) => x,
+            Err(e) => {
+                return Err(Error::Serialize(format!(
+                    "serialize json({}) fail: {}",
+                    name, e
+                )));
+            }
+        };
+        if data == "null" {
+            data = String::new();
+        }
+        self.serializer.append_pair(name, &data);
+        Ok(())
+    }
+
+    pub fn from_iter<'a, I: IntoIterator<Item = (&'a str, T)>, T: Serialize>(
+        it: I,
+    ) -> Result<Form, Error> {
+        let mut form = Form::new();
+        for (k, v) in it.into_iter() {
+            form.set(k, v)?;
+        }
+        Ok(form)
+    }
+}
+
+impl Into<Body> for Form {
+    fn into(mut self) -> Body {
+        Body::from(self.serializer.finish())
     }
 }

@@ -3,6 +3,7 @@ extern crate hyper;
 extern crate hyper_tls;
 #[macro_use]
 extern crate log;
+extern crate mime;
 extern crate native_tls;
 extern crate openssl;
 extern crate serde;
@@ -15,8 +16,9 @@ extern crate tokio_timer;
 extern crate url;
 
 pub mod error;
-pub mod client;
+#[macro_use]
 mod request;
+pub mod client;
 mod service_keeper;
 
 pub use error::Error;

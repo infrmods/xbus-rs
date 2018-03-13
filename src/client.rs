@@ -8,7 +8,7 @@ use openssl::x509::X509_FILETYPE_PEM;
 use serde_json;
 use serde_yaml;
 use serde::Deserialize;
-use request::RequestBuilder;
+use request::{Form, RequestBuilder};
 use error::Error;
 use futures::prelude::*;
 use futures::future::{loop_fn, Loop};
@@ -138,15 +138,16 @@ impl Client {
         ttl: Option<i64>,
         lease_id: Option<i64>,
     ) -> Box<Future<Item = PlugResult, Error = Error>> {
+        let mut form = Form::new();
+        form.set("ttl", ttl).unwrap();
+        form.set("lease_id", lease_id).unwrap();
+        form.set("desc", service).unwrap();
+        form.set("endpoint", endpoint).unwrap();
         self.request(
             Method::Post,
             &format!("/api/services/{}/{}", &service.name, &service.version),
-        ).send_with_body(PlugRequest {
-            ttl: ttl,
-            lease_id: lease_id,
-            desc: service.clone(),
-            endpoint: endpoint.clone(),
-        })
+        ).form(form)
+            .send()
     }
 
     pub fn plug_all_services(
@@ -156,13 +157,14 @@ impl Client {
         lease_id: Option<i64>,
         ttl: Option<i64>,
     ) -> Box<Future<Item = PlugResult, Error = Error>> {
+        let mut form = Form::new();
+        form.set("ttl", ttl).unwrap();
+        form.set("lease_id", lease_id).unwrap();
+        form.set("desces", services).unwrap();
+        form.set("endpoint", endpoint).unwrap();
         self.request(Method::Post, "/api/services")
-            .send_with_body(PlugAllRequest {
-                ttl: ttl,
-                lease_id: lease_id,
-                desces: services,
-                endpoint: endpoint.clone(),
-            })
+            .form(form)
+            .send()
     }
 
     pub fn unplug_service(

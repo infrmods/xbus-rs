@@ -17,6 +17,7 @@ futures = "0.1"
 tokio-core = "0.1"
 tokio-timer = "0.1"
 log = "0.4"
+mime = "*"
 
 [dev-dependencies]
 env_logger = "0.4"

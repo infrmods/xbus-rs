@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use hyper::{Body, Chunk, Client as HttpClient, Method, Request, StatusCode};
 use hyper::client::Connect;
 use hyper::header::{ContentType, Header, Headers};
-use mime::{APPLICATION_JSON, APPLICATION_WWW_FORM_URLENCODED};
+use mime::APPLICATION_WWW_FORM_URLENCODED;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_string as to_json};
 use error::Error;
@@ -54,9 +54,8 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
     }
 
     pub fn form(mut self, form: Form) -> RequestBuilder<'a, C> {
-        self.body = Some(form.into());
         self.set_header(ContentType(APPLICATION_WWW_FORM_URLENCODED));
-        self
+        self.body(form)
     }
 
     fn set_header<H: Header>(&mut self, header: H) {
@@ -67,26 +66,6 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
             headers.set(header);
             self.headers = Some(headers);
         }
-    }
-
-    pub fn send_with_body<T, B: Serialize>(
-        mut self,
-        body: B,
-    ) -> Box<Future<Item = T, Error = Error>>
-    where
-        for<'de> T: Deserialize<'de> + 'static,
-    {
-        let data = match to_json(&body) {
-            Ok(x) => x,
-            Err(e) => {
-                return Box::new(
-                    Err(Error::Serialize(format!("serialize json fail: {}", e))).into_future(),
-                );
-            }
-        };
-        self.set_header(ContentType(APPLICATION_JSON));
-        self.body = Some(data.into());
-        self.send()
     }
 
     fn get_response<T>(self) -> Box<Future<Item = Response<T>, Error = Error>>
@@ -239,20 +218,19 @@ impl Form {
         self.serializer.append_pair(name, &data);
         Ok(())
     }
-
-    pub fn from_iter<'a, I: IntoIterator<Item = (&'a str, T)>, T: Serialize>(
-        it: I,
-    ) -> Result<Form, Error> {
-        let mut form = Form::new();
-        for (k, v) in it.into_iter() {
-            form.set(k, v)?;
-        }
-        Ok(form)
-    }
 }
 
 impl Into<Body> for Form {
     fn into(mut self) -> Body {
         Body::from(self.serializer.finish())
     }
+}
+
+macro_rules! form {
+    ($($k: expr => $v: expr), *) => ({
+        let mut form = Form::new();
+        let mut result = Ok(());
+        $(result = result.and_then(|_| form.set($k, $v));)*
+        result.and(Ok(form))
+    })
 }

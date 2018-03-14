@@ -138,11 +138,14 @@ impl Client {
         ttl: Option<i64>,
         lease_id: Option<i64>,
     ) -> Box<Future<Item = PlugResult, Error = Error>> {
-        let mut form = Form::new();
-        form.set("ttl", ttl).unwrap();
-        form.set("lease_id", lease_id).unwrap();
-        form.set("desc", service).unwrap();
-        form.set("endpoint", endpoint).unwrap();
+        let form = match form!("ttl" => ttl, "lease_id" => lease_id,
+                               "desc" => service, "endpoint" => endpoint)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                return Box::new(Err(e).into_future());
+            }
+        };
         self.request(
             Method::Post,
             &format!("/api/services/{}/{}", &service.name, &service.version),
@@ -157,11 +160,14 @@ impl Client {
         lease_id: Option<i64>,
         ttl: Option<i64>,
     ) -> Box<Future<Item = PlugResult, Error = Error>> {
-        let mut form = Form::new();
-        form.set("ttl", ttl).unwrap();
-        form.set("lease_id", lease_id).unwrap();
-        form.set("desces", services).unwrap();
-        form.set("endpoint", endpoint).unwrap();
+        let form = match form!("ttl" => ttl, "lease_id" => lease_id,
+                               "desces" => services, "endpoint" => endpoint)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                return Box::new(Err(e).into_future());
+            }
+        };
         self.request(Method::Post, "/api/services")
             .form(form)
             .send()

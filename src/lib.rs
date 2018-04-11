@@ -1,9 +1,8 @@
 extern crate futures;
+extern crate http;
 extern crate hyper;
-extern crate hyper_tls;
 #[macro_use]
 extern crate log;
-extern crate mime;
 extern crate native_tls;
 extern crate openssl;
 extern crate serde;
@@ -11,11 +10,12 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate serde_yaml;
-extern crate tokio_core;
-extern crate tokio_timer;
+extern crate tokio;
+extern crate tokio_io;
 extern crate url;
 
 pub mod error;
+mod https;
 #[macro_use]
 mod request;
 pub mod client;

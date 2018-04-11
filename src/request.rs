@@ -1,50 +1,44 @@
 use std::collections::HashMap;
-use hyper::{Body, Chunk, Client as HttpClient, Method, Request, StatusCode};
-use hyper::client::Connect;
-use hyper::header::{ContentType, Header, Headers};
-use mime::APPLICATION_WWW_FORM_URLENCODED;
+use futures::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{from_slice, to_string as to_json};
-use error::Error;
-use futures::{Future, IntoFuture, Stream};
 use url::form_urlencoded;
+use http::request::Builder;
+use http::{Method, Uri};
+use error::Error;
+use hyper::client::{Client, Connect};
+use hyper::{Body, Chunk};
+use serde_json::{from_slice, to_string};
 
-pub struct RequestBuilder<'a, C: 'a + Connect> {
-    client: &'a HttpClient<C>,
+pub struct RequestBuilder<'a, C: 'static + Connect> {
+    client: &'a Client<C>,
     endpoint: &'a str,
-    method: Method,
     path: &'a str,
-    params: Option<HashMap<&'a str, &'a str>>,
+    params: HashMap<&'a str, &'a str>,
     body: Option<Body>,
-    headers: Option<Headers>,
+    builder: Builder,
 }
 
-impl<'a, C: Connect> RequestBuilder<'a, C> {
+impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
     pub fn new(
-        client: &'a HttpClient<C>,
+        client: &'a Client<C>,
         endpoint: &'a str,
         method: Method,
         path: &'a str,
     ) -> RequestBuilder<'a, C> {
+        let mut builder = Builder::new();
+        builder.method(method);
         RequestBuilder {
             client: client,
             endpoint: endpoint,
-            method: method,
             path: path,
-            params: None,
+            params: HashMap::new(),
             body: None,
-            headers: None,
+            builder: builder,
         }
     }
 
     pub fn param(mut self, name: &'a str, value: &'a str) -> RequestBuilder<'a, C> {
-        if let Some(ref mut params) = self.params {
-            params.insert(name, value);
-        } else {
-            let mut params = HashMap::new();
-            params.insert(name, value);
-            self.params = Some(params);
-        }
+        self.params.insert(name, value);
         self
     }
 
@@ -54,82 +48,70 @@ impl<'a, C: Connect> RequestBuilder<'a, C> {
     }
 
     pub fn form(mut self, form: Form) -> RequestBuilder<'a, C> {
-        self.set_header(ContentType(APPLICATION_WWW_FORM_URLENCODED));
+        self.builder
+            .header("Content-Type", "application/x-www-form-urlencoded");
         self.body(form)
     }
 
-    fn set_header<H: Header>(&mut self, header: H) {
-        if let Some(ref mut headers) = self.headers {
-            headers.set(header);
-        } else {
-            let mut headers = Headers::new();
-            headers.set(header);
-            self.headers = Some(headers);
-        }
-    }
-
-    fn get_response<T>(self) -> Box<Future<Item = Response<T>, Error = Error>>
+    fn get_response<T>(mut self) -> Box<Future<Item = Response<T>, Error = Error> + Send>
     where
-        for<'de> T: Deserialize<'de> + 'static,
+        for<'de> T: Deserialize<'de> + Send + 'static,
     {
         let mut url_str = self.endpoint.to_owned();
         url_str.push_str(self.path);
-        if let Some(ref params) = self.params {
-            if params.len() > 0 {
-                let ps = params
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
-                    .collect::<Vec<String>>();
-                url_str.push('?');
-                url_str.push_str(&ps.join("&"))
-            }
+        if self.params.len() > 0 {
+            url_str.push('?');
+            url_str.push_str(&self.params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<String>>()
+                .join("&"));
         }
-        let uri = match url_str.parse() {
+        let uri = match url_str.parse::<Uri>() {
             Ok(u) => u,
             Err(_) => {
                 return Box::new(Err(Error::from("invalid url")).into_future());
             }
         };
-        let mut request = Request::new(self.method, uri);
-        if let Some(body) = self.body {
-            request.set_body(body);
-        }
-        if let Some(ref headers) = self.headers {
-            request.headers_mut().extend(headers.iter());
-        }
-        Box::new(
-            self.client
-                .request(request)
-                .map_err(Error::from)
-                .and_then(|resp| {
-                    let status = resp.status();
-                    join_chunks(resp.body().map_err(Error::from)).and_then(move |body| {
-                        if status != StatusCode::Ok {
-                            let msg = format!("[{}]: {}", status, String::from_utf8_lossy(&body));
-                            return Err(Error::from(msg));
-                        }
-                        let json_rep: Response<T> = from_slice(&body)?;
-                        Ok(json_rep)
-                    })
-                }),
-        )
+        self.builder.uri(uri);
+        let request = match self.builder.body(self.body.unwrap_or_else(Body::empty)) {
+            Ok(r) => r,
+            Err(e) => {
+                return Box::new(Err(Error::from(e)).into_future());
+            }
+        };
+        let resp = self.client
+            .request(request)
+            .map_err(Error::from)
+            .and_then(|resp| {
+                let status = resp.status();
+                join_chunks(resp.into_body().map_err(Error::from)).and_then(move |body| {
+                    if !status.is_success() {
+                        let msg = format!("[{}]: {}", status, String::from_utf8_lossy(&body));
+                        return Err(Error::from(msg));
+                    }
+                    let json_rep: Response<T> = from_slice(&body)?;
+                    Ok(json_rep)
+                })
+            });
+        Box::new(resp)
     }
 
-    pub fn send<T>(self) -> Box<Future<Item = T, Error = Error>>
+    pub fn send<T>(self) -> Box<Future<Item = T, Error = Error> + Send>
     where
-        for<'de> T: Deserialize<'de> + 'static,
+        for<'de> T: Deserialize<'de> + Send + 'static,
     {
         Box::new(self.get_response().and_then(|resp| resp.get()))
     }
 
-    pub fn get_ok(self) -> Box<Future<Item = (), Error = Error>> {
+    pub fn get_ok(self) -> Box<Future<Item = (), Error = Error> + Send> {
         Box::new(self.get_response::<()>().and_then(|resp| resp.get_ok()))
     }
 }
 
-fn join_chunks<S: 'static>(s: S) -> Box<Future<Item = Vec<u8>, Error = Error>>
+fn join_chunks<S>(s: S) -> Box<Future<Item = Vec<u8>, Error = Error> + Send>
 where
-    S: Stream<Item = Chunk, Error = Error>,
+    S: Stream<Item = Chunk, Error = Error> + Send + 'static,
 {
     Box::new(s.collect().map(|cs| {
         let mut r = Vec::new();
@@ -203,7 +185,7 @@ impl Form {
     }
 
     pub fn set<T: Serialize>(&mut self, name: &str, v: T) -> Result<(), Error> {
-        let mut data = match to_json(&v) {
+        let mut data = match to_string(&v) {
             Ok(x) => x,
             Err(e) => {
                 return Err(Error::Serialize(format!(

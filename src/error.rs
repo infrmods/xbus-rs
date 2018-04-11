@@ -4,7 +4,8 @@ use std::io::Error as IOError;
 use serde_json::Error as JsonError;
 use serde_yaml::Error as YamlError;
 use url::ParseError;
-use hyper::Error as HttpError;
+use http;
+use hyper::error::Error as HttpError;
 use native_tls::Error as TlsError;
 
 #[derive(Debug)]
@@ -90,10 +91,7 @@ impl From<IOError> for Error {
 
 impl From<HttpError> for Error {
     fn from(err: HttpError) -> Error {
-        match err {
-            HttpError::Io(e) => Error::Io(e),
-            _ => Error::Other(err.description().to_owned()),
-        }
+        Error::Http(format!("{}", err))
     }
 }
 
@@ -130,5 +128,11 @@ impl<'a> From<&'a str> for Error {
 impl From<TlsError> for Error {
     fn from(e: TlsError) -> Error {
         Error::Ssl(format!("{}", e))
+    }
+}
+
+impl From<http::Error> for Error {
+    fn from(e: http::Error) -> Error {
+        Error::Http(format!("{}", e))
     }
 }

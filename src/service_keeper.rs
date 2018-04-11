@@ -1,12 +1,11 @@
-use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
-use tokio_core::reactor::Handle;
-use tokio_timer::Timer;
 use client::{Client, LeaseGrantResult, PlugResult, Service, ServiceEndpoint};
+use tokio::timer::Delay;
+use tokio::spawn;
 use error::Error;
 
 const GRANT_RETRY_INTERVAL: u64 = 5;
@@ -22,14 +21,9 @@ pub struct ServiceKeeper {
 }
 
 impl ServiceKeeper {
-    pub fn new(
-        client: &Client,
-        handle: &Handle,
-        ttl: Option<i64>,
-        endpoint: ServiceEndpoint,
-    ) -> ServiceKeeper {
+    pub fn new(client: &Client, ttl: Option<i64>, endpoint: ServiceEndpoint) -> ServiceKeeper {
         let (tx, rx) = mpsc::unbounded();
-        handle.spawn(KeepTask::new(client, handle, tx.clone(), rx, ttl, endpoint));
+        spawn(KeepTask::new(client, tx.clone(), rx, ttl, endpoint));
         ServiceKeeper { cmd_tx: tx }
     }
 
@@ -52,34 +46,31 @@ impl ServiceKeeper {
 }
 
 struct KeepTask {
-    client: Rc<Client>,
+    client: Client,
     ttl: Option<i64>,
     endpoint: ServiceEndpoint,
-    handle: Handle,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
     services: HashMap<(String, String), Service>,
     lease_result: Option<LeaseGrantResult>,
-    lease_future: Option<Box<Future<Item = LeaseGrantResult, Error = Error>>>,
-    replug_future: Option<Box<Future<Item = PlugResult, Error = Error>>>,
+    lease_future: Option<Box<Future<Item = LeaseGrantResult, Error = Error> + Send>>,
+    replug_future: Option<Box<Future<Item = PlugResult, Error = Error> + Send>>,
     replug_backs: HashMap<(String, String), oneshot::Sender<Result<(), Error>>>,
-    lease_keep_future: Option<Box<Future<Item = (), Error = Error>>>,
+    lease_keep_future: Option<Box<Future<Item = (), Error = Error> + Send>>,
 }
 
 impl KeepTask {
     fn new(
         client: &Client,
-        handle: &Handle,
         cmd_tx: mpsc::UnboundedSender<Cmd>,
         cmd_rx: mpsc::UnboundedReceiver<Cmd>,
         ttl: Option<i64>,
         endpoint: ServiceEndpoint,
     ) -> KeepTask {
         KeepTask {
-            client: Rc::new(client.clone()),
+            client: client.clone(),
             ttl: ttl,
             endpoint: endpoint,
-            handle: handle.clone(),
             services: HashMap::new(),
             cmd_tx: cmd_tx,
             cmd_rx: cmd_rx,
@@ -93,11 +84,10 @@ impl KeepTask {
 
     fn new_lease(&mut self, retry: bool) {
         if retry {
-            let timer = Timer::default()
-                .sleep(Duration::from_secs(GRANT_RETRY_INTERVAL))
-                .map_err(|e| Error::Other(format!("create keep timer fail: {}", e)));
+            let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
+                .map_err(|e| Error::Other(format!("lease keep sleep fail: {}", e)));
             let (client, ttl) = (self.client.clone(), self.ttl.clone());
-            self.lease_future = Some(Box::new(timer.then(move |_| client.grant_lease(ttl))));
+            self.lease_future = Some(Box::new(delay.then(move |_| client.grant_lease(ttl))));
         } else {
             self.lease_future = Some(Box::new(self.client.grant_lease(self.ttl.clone())));
         }
@@ -106,12 +96,12 @@ impl KeepTask {
 
     fn keep_lease(&mut self) {
         if let Some(ref mut lease_result) = self.lease_result {
-            let timer = Timer::default()
-                .sleep(Duration::from_secs(lease_result.ttl as u64 / 2))
-                .map_err(|e| Error::Other(format!("create keep timer fail: {}", e)));
+            let delay = Delay::new(
+                Instant::now() + Duration::from_secs(lease_result.ttl as u64 / 2),
+            ).map_err(|e| Error::Other(format!("keep lease sleep fail: {}", e)));
             let (client, lease_id) = (self.client.clone(), lease_result.lease_id);
             self.lease_keep_future = Some(Box::new(
-                timer.then(move |_| client.keepalive_lease(lease_id)),
+                delay.then(move |_| client.keepalive_lease(lease_id)),
             ));
         } else {
             error!("missing lease result");
@@ -122,15 +112,14 @@ impl KeepTask {
         if let Some(ref lease_result) = self.lease_result {
             let services: Vec<Service> = self.services.values().map(|s| s.clone()).collect();
             if retry {
-                let timer = Timer::default()
-                    .sleep(Duration::from_secs(GRANT_RETRY_INTERVAL))
-                    .map_err(|e| Error::Other(format!("create keep timer fail: {}", e)));
+                let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
+                    .map_err(|e| Error::Other(format!("replug sleep fail: {}", e)));
                 let (client, endpoint, lease_id) = (
                     self.client.clone(),
                     self.endpoint.clone(),
                     lease_result.lease_id,
                 );
-                self.replug_future = Some(Box::new(timer.then(move |_| {
+                self.replug_future = Some(Box::new(delay.then(move |_| {
                     client.plug_all_services(&services, &endpoint, Some(lease_id), None)
                 })));
             } else {
@@ -149,7 +138,7 @@ impl KeepTask {
     fn plug_one(&mut self, service: Service, tx: oneshot::Sender<Result<(), Error>>) {
         if let Some(ref lease_result) = self.lease_result {
             let cmd_tx = self.cmd_tx.clone();
-            self.handle.spawn(
+            spawn(
                 self.client
                     .plug_service(&service, &self.endpoint, None, Some(lease_result.lease_id))
                     .then(move |r| {

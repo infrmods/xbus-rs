@@ -1,7 +1,6 @@
-use tokio_core::reactor::Handle;
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
-use hyper_tls::HttpsConnector;
+use https::HttpsConnector;
 use native_tls::TlsConnector;
 use native_tls::backend::openssl::TlsConnectorBuilderExt;
 use openssl::x509::X509_FILETYPE_PEM;
@@ -13,9 +12,10 @@ use error::Error;
 use futures::prelude::*;
 use futures::future::{loop_fn, Loop};
 use futures::sync::mpsc;
-use tokio_core::reactor::Timeout;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use service_keeper::ServiceKeeper;
+use tokio::spawn;
+use tokio::timer::Delay;
 
 const DEFAULT_THREADS: usize = 4;
 
@@ -51,7 +51,6 @@ impl Config {
 #[derive(Clone)]
 pub struct Client {
     config: Config,
-    handle: Handle,
     client: HttpClient<HttpsConnector<HttpConnector>>,
 }
 
@@ -59,7 +58,7 @@ impl Client {
     fn tls_connector(config: &Config) -> Result<TlsConnector, Error> {
         let mut tls_builder = TlsConnector::builder()?;
         {
-            let builder = tls_builder.builder_mut().builder_mut();
+            let builder = tls_builder.builder_mut();
             if let Some(ref path) = config.ca_file {
                 builder
                     .set_ca_file(path)
@@ -77,16 +76,13 @@ impl Client {
         Ok(tls_builder.build()?)
     }
 
-    pub fn new(config: Config, handle: &Handle) -> Result<Client, Error> {
-        let mut http_connector = HttpConnector::new(DEFAULT_THREADS, handle);
+    pub fn new(config: Config) -> Result<Client, Error> {
+        let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
         http_connector.enforce_http(false);
-        let https_connector = HttpsConnector::from((http_connector, Self::tls_connector(&config)?));
-        let http_client = HttpClient::configure()
-            .connector(https_connector)
-            .build(handle);
+        let https_connector = HttpsConnector::new(Self::tls_connector(&config)?, http_connector);
+        let http_client = HttpClient::builder().build(https_connector);
         Ok(Client {
             config: config,
-            handle: handle.clone(),
             client: http_client,
         })
     }
@@ -99,15 +95,18 @@ impl Client {
         RequestBuilder::new(&self.client, &self.config.endpoint, method, path)
     }
 
-    pub fn get(&self, key: &str) -> Box<Future<Item = Item, Error = Error>> {
+    pub fn get(&self, key: &str) -> Box<Future<Item = Item, Error = Error> + Send> {
         Box::new(
-            self.request(Method::Get, &format!("/api/configs/{}", key))
+            self.request(Method::GET, &format!("/api/configs/{}", key))
                 .send()
                 .map(|r: ItemResult| r.config),
         )
     }
 
-    pub fn get_all(&self, keys: &Vec<String>) -> Box<Future<Item = Vec<Item>, Error = Error>> {
+    pub fn get_all(
+        &self,
+        keys: &Vec<String>,
+    ) -> Box<Future<Item = Vec<Item>, Error = Error> + Send> {
         let val = match serde_json::to_string(keys) {
             Ok(v) => v,
             Err(e) => {
@@ -115,7 +114,7 @@ impl Client {
             }
         };
         Box::new(
-            self.request(Method::Get, "/api/configs")
+            self.request(Method::GET, "/api/configs")
                 .param("keys", &val)
                 .send()
                 .map(|r: ItemsResult| r.configs),
@@ -126,8 +125,8 @@ impl Client {
         &self,
         name: &str,
         version: &str,
-    ) -> Box<Future<Item = ServiceResult, Error = Error>> {
-        self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+    ) -> Box<Future<Item = ServiceResult, Error = Error> + Send> {
+        self.request(Method::GET, &format!("/api/services/{}/{}", name, version))
             .send()
     }
 
@@ -137,7 +136,7 @@ impl Client {
         endpoint: &ServiceEndpoint,
         ttl: Option<i64>,
         lease_id: Option<i64>,
-    ) -> Box<Future<Item = PlugResult, Error = Error>> {
+    ) -> Box<Future<Item = PlugResult, Error = Error> + Send> {
         let form = match form!("ttl" => ttl, "lease_id" => lease_id,
                                "desc" => service, "endpoint" => endpoint)
         {
@@ -147,7 +146,7 @@ impl Client {
             }
         };
         self.request(
-            Method::Post,
+            Method::POST,
             &format!("/api/services/{}/{}", &service.name, &service.version),
         ).form(form)
             .send()
@@ -159,7 +158,7 @@ impl Client {
         endpoint: &ServiceEndpoint,
         lease_id: Option<i64>,
         ttl: Option<i64>,
-    ) -> Box<Future<Item = PlugResult, Error = Error>> {
+    ) -> Box<Future<Item = PlugResult, Error = Error> + Send> {
         let form = match form!("ttl" => ttl, "lease_id" => lease_id,
                                "desces" => services, "endpoint" => endpoint)
         {
@@ -168,7 +167,7 @@ impl Client {
                 return Box::new(Err(e).into_future());
             }
         };
-        self.request(Method::Post, "/api/services")
+        self.request(Method::POST, "/api/services")
             .form(form)
             .send()
     }
@@ -177,9 +176,9 @@ impl Client {
         &self,
         name: &str,
         version: &str,
-    ) -> Box<Future<Item = (), Error = Error>> {
+    ) -> Box<Future<Item = (), Error = Error> + Send> {
         self.request(
-            Method::Delete,
+            Method::DELETE,
             &format!("/api/service/{}/{}", name, version),
         ).get_ok()
     }
@@ -187,23 +186,23 @@ impl Client {
     pub fn grant_lease(
         &self,
         ttl: Option<i64>,
-    ) -> Box<Future<Item = LeaseGrantResult, Error = Error>> {
+    ) -> Box<Future<Item = LeaseGrantResult, Error = Error> + Send> {
         let ttl = ttl.map(|n| format!("{}", n));
         let ttl = ttl.as_ref();
-        let mut req = self.request(Method::Post, "/api/leases");
+        let mut req = self.request(Method::POST, "/api/leases");
         if let Some(ttl) = ttl {
             req = req.param("ttl", ttl);
         }
         req.send()
     }
 
-    pub fn keepalive_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
-        self.request(Method::Post, &format!("/api/leases/{}", lease_id))
+    pub fn keepalive_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error> + Send> {
+        self.request(Method::POST, &format!("/api/leases/{}", lease_id))
             .get_ok()
     }
 
-    pub fn revoke_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error>> {
-        self.request(Method::Delete, &format!("/api/leases/{}", lease_id))
+    pub fn revoke_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error> + Send> {
+        self.request(Method::DELETE, &format!("/api/leases/{}", lease_id))
             .get_ok()
     }
 
@@ -213,9 +212,9 @@ impl Client {
         version: &str,
         revision: u64,
         timeout: u64,
-    ) -> Box<Future<Item = Option<ServiceResult>, Error = Error>> {
+    ) -> Box<Future<Item = Option<ServiceResult>, Error = Error> + Send> {
         Box::new(
-            self.request(Method::Get, &format!("/api/services/{}/{}", name, version))
+            self.request(Method::GET, &format!("/api/services/{}/{}", name, version))
                 .param("watch", "true")
                 .param("revision", &format!("{}", revision))
                 .param("timeout", &format!("{}", timeout))
@@ -234,19 +233,17 @@ impl Client {
     ) -> mpsc::UnboundedReceiver<ServiceResult> {
         let (name, version) = (name.to_string(), version.to_string());
         let (tx, rx) = mpsc::unbounded();
-        self.handle.spawn(loop_fn(
+        spawn(loop_fn(
             (self.clone(), revision),
             move |(client, revision)| {
                 let (name, version) = (name.clone(), version.clone());
                 let tx = tx.clone();
-                let h = client.handle.clone();
                 match revision {
                     Some(rev) => client.watch_service_once(&name, &version, rev, timeout),
                     None => Box::new(client.get_service(&name, &version).map(Some)),
                 }.or_else(move |e| {
                     error!("watch service({}:{}) error: {}", &name, &version, e);
-                    Timeout::new(Duration::from_secs(5), &h)
-                        .expect("create timeout fail")
+                    Delay::new(Instant::now() + Duration::from_secs(5))
                         .map(|_| None)
                         .or_else(|e| {
                             error!("poll watch err timeout fail: {}", e);
@@ -269,7 +266,7 @@ impl Client {
     }
 
     pub fn service_keeper(&self, ttl: Option<i64>, endpoint: ServiceEndpoint) -> ServiceKeeper {
-        ServiceKeeper::new(&self, &self.handle, ttl, endpoint)
+        ServiceKeeper::new(&self, ttl, endpoint)
     }
 }
 

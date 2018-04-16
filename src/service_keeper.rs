@@ -27,7 +27,7 @@ impl ServiceKeeper {
         ServiceKeeper { cmd_tx: tx }
     }
 
-    pub fn plug(&self, service: &Service) -> Box<Future<Item = (), Error = Error>> {
+    pub fn plug(&self, service: &Service) -> Box<Future<Item = (), Error = Error> + Send> {
         let (tx, rx) = oneshot::channel();
         if let Err(_) = self.cmd_tx.unbounded_send(Cmd::Plug(service.clone(), tx)) {
             return Box::new(Err(Error::Other("keep task failed".to_string())).into_future());

@@ -4,6 +4,7 @@ use https::HttpsConnector;
 use native_tls::TlsConnector;
 use native_tls::backend::openssl::TlsConnectorBuilderExt;
 use openssl::x509::X509_FILETYPE_PEM;
+use openssl::ssl::SSL_VERIFY_NONE;
 use serde_json;
 use serde_yaml;
 use serde::Deserialize;
@@ -22,6 +23,8 @@ const DEFAULT_THREADS: usize = 4;
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Config {
     pub endpoint: String,
+    pub insecure: bool,
+    pub dev_app: Option<String>,
     pub ca_file: Option<String>,
     pub cert_key_file: Option<(String, String)>,
     pub max_idle_connections: Option<usize>,
@@ -31,6 +34,8 @@ impl Config {
     pub fn new(endpoint: &str) -> Config {
         Config {
             endpoint: endpoint.to_owned(),
+            insecure: false,
+            dev_app: None,
             ca_file: None,
             cert_key_file: None,
             max_idle_connections: None,
@@ -59,6 +64,10 @@ impl Client {
         let mut tls_builder = TlsConnector::builder()?;
         {
             let builder = tls_builder.builder_mut();
+            if config.insecure {
+                warn!("connect to xbus: insecure");
+                builder.set_verify(SSL_VERIFY_NONE);
+            }
             if let Some(ref path) = config.ca_file {
                 builder
                     .set_ca_file(path)
@@ -77,6 +86,9 @@ impl Client {
     }
 
     pub fn new(config: Config) -> Result<Client, Error> {
+        if config.dev_app.is_some() && config.cert_key_file.is_some() {
+            return Err(Error::Other("dev_app & config duplicated".to_string()));
+        }
         let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
         http_connector.enforce_http(false);
         let https_connector = HttpsConnector::new(Self::tls_connector(&config)?, http_connector);
@@ -92,7 +104,11 @@ impl Client {
         method: Method,
         path: &'a str,
     ) -> RequestBuilder<'a, HttpsConnector<HttpConnector>> {
-        RequestBuilder::new(&self.client, &self.config.endpoint, method, path)
+        let mut builder = RequestBuilder::new(&self.client, &self.config.endpoint, method, path);
+        if let Some(ref dev_app) = self.config.dev_app {
+            builder = builder.header("Dev-App", dev_app);
+        }
+        builder
     }
 
     pub fn get(&self, key: &str) -> Box<Future<Item = Item, Error = Error> + Send> {

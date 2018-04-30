@@ -42,6 +42,11 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         self
     }
 
+    pub fn header(mut self, name: &'a str, value: &'a str) -> RequestBuilder<'a, C> {
+        self.builder.header(name, value);
+        self
+    }
+
     pub fn body<B: Into<Body>>(mut self, body: B) -> RequestBuilder<'a, C> {
         self.body = Some(body.into());
         self

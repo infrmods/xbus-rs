@@ -8,6 +8,7 @@ use error::Error;
 use hyper::client::{Client, Connect};
 use hyper::{Body, Chunk};
 use serde_json::{from_slice, to_string};
+use percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
 
 pub struct RequestBuilder<'a, C: 'static + Connect> {
     client: &'a Client<C>,
@@ -68,14 +69,16 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
             url_str.push('?');
             url_str.push_str(&self.params
                 .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
+                .map(|(k, v)| format!("{}={}", k, percent_encode(v.as_bytes(), DEFAULT_ENCODE_SET)))
                 .collect::<Vec<String>>()
                 .join("&"));
         }
         let uri = match url_str.parse::<Uri>() {
             Ok(u) => u,
             Err(_) => {
-                return Box::new(Err(Error::from("invalid url")).into_future());
+                return Box::new(
+                    Err(Error::Other(format!("invalid url: {}", url_str))).into_future(),
+                );
             }
         };
         self.builder.uri(uri);

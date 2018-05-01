@@ -5,6 +5,7 @@ extern crate hyper;
 extern crate log;
 extern crate native_tls;
 extern crate openssl;
+extern crate percent_encoding;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;

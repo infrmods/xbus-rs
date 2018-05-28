@@ -29,7 +29,10 @@ impl ServiceKeeper {
 
     pub fn plug(&self, service: &Service) -> Box<Future<Item = (), Error = Error> + Send> {
         let (tx, rx) = oneshot::channel();
-        if let Err(_) = self.cmd_tx.unbounded_send(Cmd::Plug(service.clone(), tx)) {
+        if self.cmd_tx
+            .unbounded_send(Cmd::Plug(service.clone(), tx))
+            .is_err()
+        {
             return Box::new(Err(Error::Other("keep task failed".to_string())).into_future());
         }
         Box::new(rx.then(|r| match r {
@@ -69,11 +72,11 @@ impl KeepTask {
     ) -> KeepTask {
         KeepTask {
             client: client.clone(),
-            ttl: ttl,
-            endpoint: endpoint,
+            ttl,
+            endpoint,
             services: HashMap::new(),
-            cmd_tx: cmd_tx,
-            cmd_rx: cmd_rx,
+            cmd_tx,
+            cmd_rx,
             lease_result: None,
             lease_future: None,
             replug_future: None,
@@ -86,10 +89,10 @@ impl KeepTask {
         if retry {
             let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
                 .map_err(|e| Error::Other(format!("lease keep sleep fail: {}", e)));
-            let (client, ttl) = (self.client.clone(), self.ttl.clone());
+            let (client, ttl) = (self.client.clone(), self.ttl);
             self.lease_future = Some(Box::new(delay.then(move |_| client.grant_lease(ttl))));
         } else {
-            self.lease_future = Some(Box::new(self.client.grant_lease(self.ttl.clone())));
+            self.lease_future = Some(Box::new(self.client.grant_lease(self.ttl)));
         }
         self.lease_keep_future = None;
     }
@@ -110,7 +113,7 @@ impl KeepTask {
 
     fn replug_all(&mut self, retry: bool) {
         if let Some(ref lease_result) = self.lease_result {
-            let services: Vec<Service> = self.services.values().map(|s| s.clone()).collect();
+            let services: Vec<Service> = self.services.values().cloned().collect();
             if retry {
                 let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
                     .map_err(|e| Error::Other(format!("replug sleep fail: {}", e)));
@@ -142,7 +145,7 @@ impl KeepTask {
                 self.client
                     .plug_service(&service, &self.endpoint, None, Some(lease_result.lease_id))
                     .then(move |r| {
-                        Ok(match r {
+                        match r {
                             Ok(_) => {
                                 let _ = tx.send(Ok(()));
                             }
@@ -152,7 +155,8 @@ impl KeepTask {
                                 }
                                 let _ = tx.send(Err(e));
                             }
-                        })
+                        };
+                        Ok(())
                     }),
             );
         } else {
@@ -165,6 +169,7 @@ impl Future for KeepTask {
     type Item = ();
     type Error = ();
 
+    #[cfg_attr(feature = "cargo-clippy", allow(map_entry))]
     fn poll(&mut self) -> Poll<(), ()> {
         loop {
             match self.cmd_rx.poll() {
@@ -247,7 +252,7 @@ impl Future for KeepTask {
                         let keys: Vec<(String, String)> = self.replug_backs
                             .keys()
                             .filter(|k| set.contains(&k.0))
-                            .map(|k| k.clone())
+                            .cloned()
                             .collect();
                         for k in keys {
                             let _ = self.replug_backs.remove(&k).unwrap().send(Err(

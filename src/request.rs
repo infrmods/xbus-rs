@@ -30,12 +30,12 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         let mut builder = Builder::new();
         builder.method(method);
         RequestBuilder {
-            client: client,
-            endpoint: endpoint,
-            path: path,
+            client,
+            endpoint,
+            path,
             params: HashMap::new(),
             body: None,
-            builder: builder,
+            builder,
         }
     }
 
@@ -66,7 +66,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
     {
         let mut url_str = self.endpoint.to_owned();
         url_str.push_str(self.path);
-        if self.params.len() > 0 {
+        if self.params.is_empty() {
             url_str.push('?');
             url_str.push_str(&self.params
                 .iter()
@@ -159,11 +159,11 @@ impl<T> Response<T> {
             Some(err) => {
                 if err.code == "NOT_PERMITTED" {
                     Error::NotPermitted(
-                        err.message.unwrap_or("".to_owned()),
-                        err.keys.unwrap_or(Vec::new()),
+                        err.message.unwrap_or_else(String::new),
+                        err.keys.unwrap_or_else(Vec::new),
                     )
                 } else {
-                    Error::Request(err.code, err.message.unwrap_or("".to_owned()))
+                    Error::Request(err.code, err.message.unwrap_or_else(String::new))
                 }
             }
             None => Error::from("missing error"),

@@ -21,28 +21,28 @@ pub enum Error {
 
 impl Error {
     pub fn is_timeout(&self) -> bool {
-        if let &Error::Request(ref code, _) = self {
+        if let Error::Request(code, _) = self {
             if code == "DEADLINE_EXCEEDED" {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     pub fn is_not_found(&self) -> bool {
-        if let &Error::Request(ref code, _) = self {
+        if let Error::Request(code, _) = self {
             if code == "NOT_FOUND" {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     pub fn can_retry(&self) -> bool {
-        match *self {
+        match self {
             Error::Ssl(_) => false,
             Error::Serialize(_) => false,
-            Error::Request(ref code, _) => match code.as_str() {
+            Error::Request(code, _) => match code.as_str() {
                 "SYSTEM_ERROR" | "TOO_MANY_ATTEMPTS" | "DEADLINE_EXCEEDED" | "CANCELLED" => true,
                 _ => false,
             },
@@ -55,30 +55,28 @@ impl Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-        match *self {
-            Error::Io(ref e) => e.fmt(f),
-            Error::Http(ref e) => write!(f, "{}", e),
-            Error::Ssl(ref e) => write!(f, "{}", e),
-            Error::Serialize(ref e) => write!(f, "{}", e),
-            Error::Request(ref code, ref message) => {
-                write!(f, "request fail[{}]: {}", code, message)
-            }
-            Error::NotPermitted(ref message, _) => write!(f, "not permitted: {}", message),
-            Error::Other(ref e) => write!(f, "{}", e),
+        match self {
+            Error::Io(e) => e.fmt(f),
+            Error::Http(e) => write!(f, "{}", e),
+            Error::Ssl(e) => write!(f, "{}", e),
+            Error::Serialize(e) => write!(f, "{}", e),
+            Error::Request(code, message) => write!(f, "request fail[{}]: {}", code, message),
+            Error::NotPermitted(message, _) => write!(f, "not permitted: {}", message),
+            Error::Other(e) => write!(f, "{}", e),
         }
     }
 }
 
 impl StdError for Error {
     fn description(&self) -> &str {
-        match *self {
-            Error::Io(ref e) => e.description(),
-            Error::Http(ref e) => e,
-            Error::Ssl(ref e) => e,
-            Error::Serialize(ref e) => e,
-            Error::Request(_, ref message) => message,
-            Error::NotPermitted(ref message, _) => message,
-            Error::Other(ref e) => e,
+        match self {
+            Error::Io(e) => e.description(),
+            Error::Http(e) => e,
+            Error::Ssl(e) => e,
+            Error::Serialize(e) => e,
+            Error::Request(_, message) => message,
+            Error::NotPermitted(message, _) => message,
+            Error::Other(e) => e,
         }
     }
 }

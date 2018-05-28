@@ -92,11 +92,8 @@ impl Client {
         let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
         http_connector.enforce_http(false);
         let https_connector = HttpsConnector::new(Self::tls_connector(&config)?, http_connector);
-        let http_client = HttpClient::builder().build(https_connector);
-        Ok(Client {
-            config: config,
-            client: http_client,
-        })
+        let client = HttpClient::builder().build(https_connector);
+        Ok(Client { config, client })
     }
 
     fn request<'a>(
@@ -119,10 +116,7 @@ impl Client {
         )
     }
 
-    pub fn get_all(
-        &self,
-        keys: &Vec<String>,
-    ) -> Box<Future<Item = Vec<Item>, Error = Error> + Send> {
+    pub fn get_all(&self, keys: &[String]) -> Box<Future<Item = Vec<Item>, Error = Error> + Send> {
         let val = match serde_json::to_string(keys) {
             Ok(v) => v,
             Err(e) => {

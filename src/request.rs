@@ -66,7 +66,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
     {
         let mut url_str = self.endpoint.to_owned();
         url_str.push_str(self.path);
-        if self.params.is_empty() {
+        if !self.params.is_empty() {
             url_str.push('?');
             url_str.push_str(&self.params
                 .iter()

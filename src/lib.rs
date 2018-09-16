@@ -3,10 +3,12 @@ extern crate http;
 extern crate hyper;
 #[macro_use]
 extern crate log;
-extern crate native_tls;
-extern crate openssl;
 extern crate percent_encoding;
+extern crate rustls;
 extern crate serde;
+extern crate tokio_rustls;
+extern crate webpki;
+extern crate webpki_roots;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
@@ -22,7 +24,7 @@ mod request;
 pub mod client;
 mod service_keeper;
 
-pub use error::Error;
-pub use client::Config;
 pub use client::Client;
+pub use client::Config;
+pub use error::Error;
 pub use service_keeper::ServiceKeeper;

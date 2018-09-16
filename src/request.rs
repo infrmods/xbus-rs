@@ -1,15 +1,15 @@
-use std::collections::HashMap;
+use error::Error;
 use futures::prelude::*;
-use serde::{Deserialize, Serialize};
-use url::form_urlencoded;
 use http::request::Builder;
 use http::{Method, Uri};
-use error::Error;
-use hyper::client::Client;
 use hyper::client::connect::Connect;
+use hyper::client::Client;
 use hyper::{Body, Chunk};
-use serde_json::{from_slice, to_string};
 use percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
+use serde::{Deserialize, Serialize};
+use serde_json::{from_slice, to_string};
+use std::collections::HashMap;
+use url::form_urlencoded;
 
 pub struct RequestBuilder<'a, C: 'static + Connect> {
     client: &'a Client<C>,
@@ -68,11 +68,15 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         url_str.push_str(self.path);
         if !self.params.is_empty() {
             url_str.push('?');
-            url_str.push_str(&self.params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, percent_encode(v.as_bytes(), DEFAULT_ENCODE_SET)))
-                .collect::<Vec<String>>()
-                .join("&"));
+            url_str.push_str(
+                &self
+                    .params
+                    .iter()
+                    .map(|(k, v)| {
+                        format!("{}={}", k, percent_encode(v.as_bytes(), DEFAULT_ENCODE_SET))
+                    }).collect::<Vec<String>>()
+                    .join("&"),
+            );
         }
         let uri = match url_str.parse::<Uri>() {
             Ok(u) => u,
@@ -89,7 +93,8 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                 return Box::new(Err(Error::from(e)).into_future());
             }
         };
-        let resp = self.client
+        let resp = self
+            .client
             .request(request)
             .map_err(Error::from)
             .and_then(|resp| {

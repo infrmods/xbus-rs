@@ -1,12 +1,12 @@
+use client::{Client, LeaseGrantResult, PlugResult, Service, ServiceEndpoint};
+use error::Error;
+use futures::prelude::*;
+use futures::sync::{mpsc, oneshot};
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::time::{Duration, Instant};
-use futures::prelude::*;
-use futures::sync::{mpsc, oneshot};
-use client::{Client, LeaseGrantResult, PlugResult, Service, ServiceEndpoint};
-use tokio::timer::Delay;
 use tokio::spawn;
-use error::Error;
+use tokio::timer::Delay;
 
 const GRANT_RETRY_INTERVAL: u64 = 5;
 
@@ -29,7 +29,8 @@ impl ServiceKeeper {
 
     pub fn plug(&self, service: &Service) -> Box<Future<Item = (), Error = Error> + Send> {
         let (tx, rx) = oneshot::channel();
-        if self.cmd_tx
+        if self
+            .cmd_tx
             .unbounded_send(Cmd::Plug(service.clone(), tx))
             .is_err()
         {
@@ -43,7 +44,8 @@ impl ServiceKeeper {
     }
 
     pub fn unplug<S: Into<String>>(&self, name: S, version: S) {
-        let _ = self.cmd_tx
+        let _ = self
+            .cmd_tx
             .unbounded_send(Cmd::Unplug(name.into(), version.into()));
     }
 }
@@ -99,9 +101,9 @@ impl KeepTask {
 
     fn keep_lease(&mut self) {
         if let Some(ref mut lease_result) = self.lease_result {
-            let delay = Delay::new(
-                Instant::now() + Duration::from_secs(lease_result.ttl as u64 / 2),
-            ).map_err(|e| Error::Other(format!("keep lease sleep fail: {}", e)));
+            let delay =
+                Delay::new(Instant::now() + Duration::from_secs(lease_result.ttl as u64 / 2))
+                    .map_err(|e| Error::Other(format!("keep lease sleep fail: {}", e)));
             let (client, lease_id) = (self.client.clone(), lease_result.lease_id);
             self.lease_keep_future = Some(Box::new(
                 delay.then(move |_| client.keepalive_lease(lease_id)),
@@ -249,7 +251,8 @@ impl Future for KeepTask {
                                 true
                             }
                         });
-                        let keys: Vec<(String, String)> = self.replug_backs
+                        let keys: Vec<(String, String)> = self
+                            .replug_backs
                             .keys()
                             .filter(|k| set.contains(&k.0))
                             .cloned()

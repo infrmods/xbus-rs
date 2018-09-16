@@ -1,12 +1,11 @@
+use http;
+use hyper::error::Error as HttpError;
+use serde_json::Error as JsonError;
+use serde_yaml::Error as YamlError;
 use std::error::Error as StdError;
 use std::fmt::{Display, Error as FmtError, Formatter};
 use std::io::Error as IOError;
-use serde_json::Error as JsonError;
-use serde_yaml::Error as YamlError;
 use url::ParseError;
-use http;
-use hyper::error::Error as HttpError;
-use native_tls::Error as TlsError;
 
 #[derive(Debug)]
 pub enum Error {
@@ -120,12 +119,6 @@ impl From<String> for Error {
 impl<'a> From<&'a str> for Error {
     fn from(msg: &'a str) -> Error {
         Error::Other(msg.to_owned())
-    }
-}
-
-impl From<TlsError> for Error {
-    fn from(e: TlsError) -> Error {
-        Error::Ssl(format!("{}", e))
     }
 }
 

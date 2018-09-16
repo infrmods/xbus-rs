@@ -1,20 +1,16 @@
+use error::Error;
+use futures::future::{loop_fn, Loop};
+use futures::prelude::*;
+use futures::sync::mpsc;
+use https::{ClientConfigPemExt, HttpsConnector};
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
-use https::HttpsConnector;
-use native_tls::TlsConnector;
-use native_tls::backend::openssl::TlsConnectorBuilderExt;
-use openssl::x509::X509_FILETYPE_PEM;
-use openssl::ssl::SSL_VERIFY_NONE;
+use request::{Form, RequestBuilder};
+use serde::Deserialize;
 use serde_json;
 use serde_yaml;
-use serde::Deserialize;
-use request::{Form, RequestBuilder};
-use error::Error;
-use futures::prelude::*;
-use futures::future::{loop_fn, Loop};
-use futures::sync::mpsc;
-use std::time::{Duration, Instant};
 use service_keeper::ServiceKeeper;
+use std::time::{Duration, Instant};
 use tokio::spawn;
 use tokio::timer::Delay;
 
@@ -60,38 +56,29 @@ pub struct Client {
 }
 
 impl Client {
-    fn tls_connector(config: &Config) -> Result<TlsConnector, Error> {
-        let mut tls_builder = TlsConnector::builder()?;
-        {
-            let builder = tls_builder.builder_mut();
-            if config.insecure {
-                warn!("connect to xbus: insecure");
-                builder.set_verify(SSL_VERIFY_NONE);
-            }
-            if let Some(ref path) = config.ca_file {
-                builder
-                    .set_ca_file(path)
-                    .map_err(|e| Error::Ssl(format!("set cacert({}) fail: {}", path, e)))?;
-            }
-            if let Some((ref cert, ref key)) = config.cert_key_file {
-                builder
-                    .set_certificate_file(cert, X509_FILETYPE_PEM)
-                    .map_err(|e| Error::Ssl(format!("set cert({}) fail: {}", cert, e)))?;
-                builder
-                    .set_private_key_file(key, X509_FILETYPE_PEM)
-                    .map_err(|e| Error::Ssl(format!("set private key({}) fail: {}", key, e)))?;
-            }
+    fn build_https_connector(config: &Config) -> Result<HttpsConnector<HttpConnector>, Error> {
+        let mut tls_config = ::rustls::ClientConfig::new();
+        if config.insecure {
+            tls_config.set_insecure();
         }
-        Ok(tls_builder.build()?)
+        if let Some(ref path) = config.ca_file {
+            tls_config.add_root_cert(path)?;
+        }
+        if let Some((ref cert, ref key)) = config.cert_key_file {
+            tls_config.add_cert_key(cert, key)?;
+        }
+
+        let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
+        http_connector.enforce_http(false);
+        let https_connector = HttpsConnector::new(tls_config, http_connector);
+        Ok(https_connector)
     }
 
     pub fn new(config: Config) -> Result<Client, Error> {
         if config.dev_app.is_some() && config.cert_key_file.is_some() {
             return Err(Error::Other("dev_app & config duplicated".to_string()));
         }
-        let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
-        http_connector.enforce_http(false);
-        let https_connector = HttpsConnector::new(Self::tls_connector(&config)?, http_connector);
+        let https_connector = Self::build_https_connector(&config)?;
         let client = HttpClient::builder().build(https_connector);
         Ok(Client { config, client })
     }
@@ -159,7 +146,7 @@ impl Client {
             Method::POST,
             &format!("/api/services/{}/{}", &service.name, &service.version),
         ).form(form)
-            .send()
+        .send()
     }
 
     pub fn plug_all_services(
@@ -259,17 +246,16 @@ impl Client {
                             error!("poll watch err timeout fail: {}", e);
                             Ok(None)
                         })
-                })
-                    .and_then(move |result| match result {
-                        Some(service_result) => {
-                            let revision = service_result.revision + 1;
-                            if tx.unbounded_send(service_result).is_err() {
-                                return Ok(Loop::Break(()));
-                            }
-                            Ok(Loop::Continue((client, Some(revision))))
+                }).and_then(move |result| match result {
+                    Some(service_result) => {
+                        let revision = service_result.revision + 1;
+                        if tx.unbounded_send(service_result).is_err() {
+                            return Ok(Loop::Break(()));
                         }
-                        None => Ok(Loop::Continue((client, revision))),
-                    })
+                        Ok(Loop::Continue((client, Some(revision))))
+                    }
+                    None => Ok(Loop::Continue((client, revision))),
+                })
             },
         ));
         rx

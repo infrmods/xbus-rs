@@ -1,3 +1,4 @@
+use cert::get_cert_cn;
 use error::Error;
 use futures::prelude::*;
 use hyper::client::connect::{Connect, Connected, Destination};
@@ -14,7 +15,7 @@ use webpki_roots;
 pub trait ClientConfigPemExt {
     fn set_insecure(&mut self);
     fn add_root_cert(&mut self, pem_path: &str) -> Result<(), Error>;
-    fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<(), Error>;
+    fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<String, Error>;
 }
 
 impl ClientConfigPemExt for ClientConfig {
@@ -26,19 +27,19 @@ impl ClientConfigPemExt for ClientConfig {
 
     fn add_root_cert(&mut self, pem_path: &str) -> Result<(), Error> {
         let mut file = io::BufReader::new(File::open(pem_path)?);
-        if let Err(_) = self.root_store.add_pem_file(&mut file) {
+        if self.root_store.add_pem_file(&mut file).is_err() {
             Err(Error::Other(format!("add root cert fail: {}", pem_path)))
         } else {
             Ok(())
         }
     }
 
-    fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<(), Error> {
+    fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<String, Error> {
         let certs = {
             let mut file = io::BufReader::new(File::open(cert_path)?);
             match pemfile::certs(&mut file) {
                 Ok(certs) => {
-                    if certs.len() == 0 {
+                    if certs.is_empty() {
                         return Err(Error::Other(format!("empty cert file: {}", cert_path)));
                     }
                     certs
@@ -52,7 +53,7 @@ impl ClientConfigPemExt for ClientConfig {
             let mut file = io::BufReader::new(File::open(key_path)?);
             match pemfile::rsa_private_keys(&mut file) {
                 Ok(keys) => {
-                    if keys.len() == 0 {
+                    if keys.is_empty() {
                         return Err(Error::Other(format!("empty key file: {}", key_path)));
                     }
                     keys.into_iter().next().unwrap()
@@ -62,8 +63,10 @@ impl ClientConfigPemExt for ClientConfig {
                 }
             }
         };
+        let cn =
+            get_cert_cn(&certs[0].0).ok_or_else(|| Error::Other("get cert cn fail".to_string()))?;
         self.set_single_client_cert(certs, key);
-        Ok(())
+        Ok(cn)
     }
 }
 

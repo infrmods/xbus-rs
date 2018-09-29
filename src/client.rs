@@ -51,12 +51,15 @@ impl Config {
 
 #[derive(Clone)]
 pub struct Client {
+    app_name: Option<String>,
     config: Config,
     client: HttpClient<HttpsConnector<HttpConnector>>,
 }
 
 impl Client {
-    fn build_https_connector(config: &Config) -> Result<HttpsConnector<HttpConnector>, Error> {
+    fn build_https_connector(
+        config: &Config,
+    ) -> Result<(HttpsConnector<HttpConnector>, Option<String>), Error> {
         let mut tls_config = ::rustls::ClientConfig::new();
         if config.insecure {
             tls_config.set_insecure();
@@ -64,23 +67,37 @@ impl Client {
         if let Some(ref path) = config.ca_file {
             tls_config.add_root_cert(path)?;
         }
-        if let Some((ref cert, ref key)) = config.cert_key_file {
-            tls_config.add_cert_key(cert, key)?;
-        }
+
+        let app_name = if let Some((ref cert, ref key)) = config.cert_key_file {
+            Some(tls_config.add_cert_key(cert, key)?)
+        } else {
+            None
+        };
 
         let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
         http_connector.enforce_http(false);
         let https_connector = HttpsConnector::new(tls_config, http_connector);
-        Ok(https_connector)
+        Ok((https_connector, app_name))
     }
 
     pub fn new(config: Config) -> Result<Client, Error> {
         if config.dev_app.is_some() && config.cert_key_file.is_some() {
             return Err(Error::Other("dev_app & config duplicated".to_string()));
         }
-        let https_connector = Self::build_https_connector(&config)?;
+        let (https_connector, mut app_name) = Self::build_https_connector(&config)?;
+        if config.dev_app.is_some() {
+            app_name = config.dev_app.clone();
+        }
         let client = HttpClient::builder().build(https_connector);
-        Ok(Client { config, client })
+        Ok(Client {
+            app_name,
+            config,
+            client,
+        })
+    }
+
+    pub fn get_app_name(&self) -> Option<&String> {
+        self.app_name.as_ref()
     }
 
     fn request<'a>(

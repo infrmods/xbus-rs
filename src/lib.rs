@@ -19,7 +19,7 @@ extern crate tokio;
 extern crate tokio_io;
 extern crate url;
 
-mod cert;
+pub mod cert;
 pub mod error;
 mod https;
 #[macro_use]

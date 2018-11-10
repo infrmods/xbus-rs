@@ -15,6 +15,7 @@ enum Cmd {
     Plug(Service, oneshot::Sender<Result<(), Error>>),
     Unplug(String, String),
     Cancel(String, String),
+    RevokeAndClose(oneshot::Sender<()>),
 }
 
 pub struct ServiceKeeper {
@@ -39,12 +40,12 @@ impl ServiceKeeper {
             .unbounded_send(Cmd::Plug(service.clone(), tx))
             .is_err()
         {
-            return Box::new(Err(Error::Other("keep task failed".to_string())).into_future());
+            return Box::new(Err(Error::Other("keep task closed".to_string())).into_future());
         }
         Box::new(rx.then(|r| match r {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(Error::Other("keep task failed".to_string())),
+            Err(_) => Err(Error::Other("keep task closed".to_string())),
         }))
     }
 
@@ -52,6 +53,18 @@ impl ServiceKeeper {
         let _ = self
             .cmd_tx
             .unbounded_send(Cmd::Unplug(name.into(), version.into()));
+    }
+
+    pub fn close(&self) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(r) = self.cmd_tx.unbounded_send(Cmd::RevokeAndClose(tx)) {
+            if let Cmd::RevokeAndClose(tx) = r.into_inner() {
+                let _ = tx.send(());
+            } else {
+                unreachable!();
+            }
+        }
+        rx
     }
 }
 
@@ -216,6 +229,19 @@ impl Future for KeepTask {
                         let key = (name, version);
                         self.services.remove(&key);
                         self.replug_backs.remove(&key);
+                    }
+                    Cmd::RevokeAndClose(tx) => {
+                        if let Some(ref lease_result) = self.lease_result {
+                            let lease_id = lease_result.lease_id;
+                            spawn(self.client.revoke_lease(lease_id).then(move |r| {
+                                if let Err(e) = r {
+                                    error!("revoke lease {} fail: {}", lease_id, e);
+                                }
+                                let _ = tx.send(());
+                                Ok(())
+                            }));
+                        }
+                        return Ok(Async::Ready(()));
                     }
                 },
                 Ok(Async::NotReady) => {

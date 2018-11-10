@@ -11,6 +11,7 @@ use tokio::timer::Delay;
 const GRANT_RETRY_INTERVAL: u64 = 5;
 
 enum Cmd {
+    UpdateEndpoint(ServiceEndpoint),
     Plug(Service, oneshot::Sender<Result<(), Error>>),
     Unplug(String, String),
     Cancel(String, String),
@@ -25,6 +26,10 @@ impl ServiceKeeper {
         let (tx, rx) = mpsc::unbounded();
         spawn(KeepTask::new(client, tx.clone(), rx, ttl, endpoint));
         ServiceKeeper { cmd_tx: tx }
+    }
+
+    pub fn update_endpoint(&self, endpoint: ServiceEndpoint) {
+        let _ = self.cmd_tx.unbounded_send(Cmd::UpdateEndpoint(endpoint));
     }
 
     pub fn plug(&self, service: &Service) -> Box<Future<Item = (), Error = Error> + Send> {
@@ -97,6 +102,8 @@ impl KeepTask {
             self.lease_future = Some(Box::new(self.client.grant_lease(self.ttl)));
         }
         self.lease_keep_future = None;
+        self.lease_result = None;
+        self.replug_future = None;
     }
 
     fn keep_lease(&mut self) {
@@ -176,6 +183,12 @@ impl Future for KeepTask {
         loop {
             match self.cmd_rx.poll() {
                 Ok(Async::Ready(Some(cmd))) => match cmd {
+                    Cmd::UpdateEndpoint(endpoint) => {
+                        self.endpoint = endpoint;
+                        if self.services.len() > 0 {
+                            self.new_lease(false);
+                        }
+                    }
                     Cmd::Plug(service, tx) => {
                         let key = (service.name.clone(), service.version.clone());
                         if self.services.contains_key(&key) {
@@ -190,7 +203,7 @@ impl Future for KeepTask {
                             self.services.insert(key.clone(), service.clone());
                             self.replug_backs.insert(key, tx);
                             if self.lease_future.is_none() {
-                                self.new_lease(false)
+                                self.new_lease(false);
                             }
                         }
                     }

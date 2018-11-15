@@ -26,7 +26,10 @@ impl ClientConfigPemExt for ClientConfig {
     }
 
     fn add_root_cert(&mut self, pem_path: &str) -> Result<(), Error> {
-        let mut file = io::BufReader::new(File::open(pem_path)?);
+        let mut file =
+            io::BufReader::new(File::open(pem_path).map_err(|e| {
+                Error::Other(format!("open cacert file({}) fail: {}", pem_path, e))
+            })?);
         if self.root_store.add_pem_file(&mut file).is_err() {
             Err(Error::Other(format!("add root cert fail: {}", pem_path)))
         } else {
@@ -36,7 +39,10 @@ impl ClientConfigPemExt for ClientConfig {
 
     fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<String, Error> {
         let certs = {
-            let mut file = io::BufReader::new(File::open(cert_path)?);
+            let mut file =
+                io::BufReader::new(File::open(cert_path).map_err(|e| {
+                    Error::Other(format!("open cert file({}) fail: {}", cert_path, e))
+                })?);
             match pemfile::certs(&mut file) {
                 Ok(certs) => {
                     if certs.is_empty() {
@@ -50,7 +56,10 @@ impl ClientConfigPemExt for ClientConfig {
             }
         };
         let key = {
-            let mut file = io::BufReader::new(File::open(key_path)?);
+            let mut file =
+                io::BufReader::new(File::open(key_path).map_err(|e| {
+                    Error::Other(format!("open key file({}) fail: {}", key_path, e))
+                })?);
             match pemfile::rsa_private_keys(&mut file) {
                 Ok(keys) => {
                     if keys.is_empty() {

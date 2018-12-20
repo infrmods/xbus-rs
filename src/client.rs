@@ -88,7 +88,9 @@ impl Client {
         if config.dev_app.is_some() {
             app_name = config.dev_app.clone();
         }
-        let client = HttpClient::builder().build(https_connector);
+        let client = HttpClient::builder()
+            .max_idle_per_host(5)
+            .build(https_connector);
         Ok(Client {
             app_name,
             config,
@@ -162,7 +164,8 @@ impl Client {
         self.request(
             Method::POST,
             &format!("/api/services/{}/{}", &service.name, &service.version),
-        ).form(form)
+        )
+        .form(form)
         .send()
     }
 
@@ -194,7 +197,8 @@ impl Client {
         self.request(
             Method::DELETE,
             &format!("/api/service/{}/{}", name, version),
-        ).get_ok()
+        )
+        .get_ok()
     }
 
     pub fn grant_lease(
@@ -255,7 +259,8 @@ impl Client {
                 match revision {
                     Some(rev) => client.watch_service_once(&name, &version, rev, timeout),
                     None => Box::new(client.get_service(&name, &version).map(Some)),
-                }.or_else(move |e| {
+                }
+                .or_else(move |e| {
                     error!("watch service({}:{}) error: {}", &name, &version, e);
                     Delay::new(Instant::now() + Duration::from_secs(5))
                         .map(|_| None)
@@ -263,7 +268,8 @@ impl Client {
                             error!("poll watch err timeout fail: {}", e);
                             Ok(None)
                         })
-                }).and_then(move |result| match result {
+                })
+                .and_then(move |result| match result {
                     Some(service_result) => {
                         let revision = service_result.revision + 1;
                         if tx.unbounded_send(service_result).is_err() {

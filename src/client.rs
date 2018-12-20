@@ -57,6 +57,8 @@ pub struct Client {
 }
 
 impl Client {
+    pub const DEFAULT_MAX_IDLE_PER_HOST: usize = 20;
+
     fn build_https_connector(
         config: &Config,
     ) -> Result<(HttpsConnector<HttpConnector>, Option<String>), Error> {
@@ -88,8 +90,11 @@ impl Client {
         if config.dev_app.is_some() {
             app_name = config.dev_app.clone();
         }
+        let max_idle_per_host = config
+            .max_idle_connections
+            .unwrap_or(Self::DEFAULT_MAX_IDLE_PER_HOST);
         let client = HttpClient::builder()
-            .max_idle_per_host(5)
+            .max_idle_per_host(max_idle_per_host)
             .build(https_connector);
         Ok(Client {
             app_name,

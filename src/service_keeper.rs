@@ -15,6 +15,7 @@ enum Cmd {
     Plug(Service, oneshot::Sender<Result<(), Error>>),
     Unplug(String, String),
     Cancel(String, String),
+    Clear(oneshot::Sender<()>),
     RevokeAndClose(oneshot::Sender<()>),
 }
 
@@ -53,6 +54,18 @@ impl ServiceKeeper {
         let _ = self
             .cmd_tx
             .unbounded_send(Cmd::Unplug(name.into(), version.into()));
+    }
+
+    pub fn clear(&self) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(r) = self.cmd_tx.unbounded_send(Cmd::Clear(tx)) {
+            if let Cmd::Clear(tx) = r.into_inner() {
+                let _ = tx.send(());
+            } else {
+                unreachable!();
+            }
+        }
+        rx
     }
 
     pub fn close(&self) -> oneshot::Receiver<()> {
@@ -235,6 +248,21 @@ impl Future for KeepTask {
                         let key = (name, version);
                         self.services.remove(&key);
                         self.replug_backs.remove(&key);
+                    }
+                    Cmd::Clear(tx) => {
+                        if let Some(ref lease_result) = self.lease_result {
+                            let lease_id = lease_result.lease_id;
+                            spawn(self.client.revoke_lease(lease_id).then(move |r| {
+                                if let Err(e) = r {
+                                    error!("revoke lease {} fail: {}", lease_id, e);
+                                }
+                                let _ = tx.send(());
+                                Ok(())
+                            }));
+                        }
+                        self.replug_future = None;
+                        self.replug_backs.clear();
+                        self.services.clear();
                     }
                     Cmd::RevokeAndClose(tx) => {
                         if let Some(ref lease_result) = self.lease_result {

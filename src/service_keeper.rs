@@ -250,7 +250,7 @@ impl Future for KeepTask {
                         self.replug_backs.remove(&key);
                     }
                     Cmd::Clear(tx) => {
-                        if let Some(ref lease_result) = self.lease_result {
+                        if let Some(ref lease_result) = self.lease_result.take() {
                             let lease_id = lease_result.lease_id;
                             spawn(self.client.revoke_lease(lease_id).then(move |r| {
                                 if let Err(e) = r {

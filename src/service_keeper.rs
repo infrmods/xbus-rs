@@ -191,7 +191,6 @@ impl Future for KeepTask {
     type Item = ();
     type Error = ();
 
-    #[cfg_attr(feature = "cargo-clippy", allow(map_entry))]
     fn poll(&mut self) -> Poll<(), ()> {
         loop {
             match self.cmd_rx.poll() {
@@ -222,8 +221,15 @@ impl Future for KeepTask {
                     }
                     Cmd::Unplug(name, version) => {
                         let key = (name, version);
-                        self.services.remove(&key);
                         self.replug_backs.remove(&key);
+                        if self.services.remove(&key).is_some() {
+                            spawn(self.client.unplug_service(&key.0, &key.1).then(move |r| {
+                                if let Err(e) = r {
+                                    error!("unplug service {}:{} fail: {}", key.0, key.1, e);
+                                }
+                                Ok(())
+                            }));
+                        }
                     }
                     Cmd::Cancel(name, version) => {
                         let key = (name, version);

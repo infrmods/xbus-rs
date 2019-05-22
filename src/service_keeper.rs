@@ -218,7 +218,7 @@ impl Future for KeepTask {
                         let key = (service.name.clone(), service.version.clone());
                         if self.services.contains_key(&key) {
                             let _ = tx.send(Err(Error::Other(format!(
-                                "{}:{} has beed plugged",
+                                "{}:{} has been plugged",
                                 key.0, key.1
                             ))));
                         } else if self.lease_result.is_some() {
@@ -260,6 +260,7 @@ impl Future for KeepTask {
                                 Ok(())
                             }));
                         }
+                        self.lease_keep_future = None;
                         self.replug_future = None;
                         self.replug_backs.clear();
                         self.services.clear();

@@ -31,3 +31,5 @@ pub use client::Client;
 pub use client::Config;
 pub use error::Error;
 pub use service_keeper::ServiceKeeper;
+
+pub const DEFAULT_ZONE: &str = "default";

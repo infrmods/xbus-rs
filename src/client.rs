@@ -10,13 +10,14 @@ use serde::Deserialize;
 use serde_json;
 use serde_yaml;
 use service_keeper::ServiceKeeper;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::spawn;
 use tokio::timer::Delay;
 
 const DEFAULT_THREADS: usize = 4;
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
     pub endpoint: String,
     pub insecure: bool,
@@ -144,16 +145,15 @@ impl Client {
 
     pub fn get_service(
         &self,
-        name: &str,
-        version: &str,
+        service: &str,
     ) -> Box<Future<Item = ServiceResult, Error = Error> + Send> {
-        self.request(Method::GET, &format!("/api/services/{}/{}", name, version))
+        self.request(Method::GET, &format!("/api/v1/services/{}", service))
             .send()
     }
 
     pub fn plug_service(
         &self,
-        service: &Service,
+        service: &ZoneService,
         endpoint: &ServiceEndpoint,
         ttl: Option<i64>,
         lease_id: Option<i64>,
@@ -168,7 +168,7 @@ impl Client {
         };
         self.request(
             Method::POST,
-            &format!("/api/services/{}/{}", &service.name, &service.version),
+            &format!("/api/v1/services/{}", &service.service),
         )
         .form(form)
         .send()
@@ -176,7 +176,7 @@ impl Client {
 
     pub fn plug_all_services(
         &self,
-        services: &[Service],
+        services: &[ZoneService],
         endpoint: &ServiceEndpoint,
         lease_id: Option<i64>,
         ttl: Option<i64>,
@@ -189,19 +189,20 @@ impl Client {
                 return Box::new(Err(e).into_future());
             }
         };
-        self.request(Method::POST, "/api/services")
+        self.request(Method::POST, "/api/v1/services")
             .form(form)
             .send()
     }
 
     pub fn unplug_service(
         &self,
-        name: &str,
-        version: &str,
+        service: &str,
+        zone: &str,
+        addr: &str,
     ) -> Box<Future<Item = (), Error = Error> + Send> {
         self.request(
             Method::DELETE,
-            &format!("/api/service/{}/{}", name, version),
+            &format!("/api/v1/service/{}/{}/{}", service, zone, addr),
         )
         .get_ok()
     }
@@ -231,13 +232,12 @@ impl Client {
 
     pub fn watch_service_once(
         &self,
-        name: &str,
-        version: &str,
+        service: &str,
         revision: u64,
         timeout: u64,
     ) -> Box<Future<Item = Option<ServiceResult>, Error = Error> + Send> {
         Box::new(
-            self.request(Method::GET, &format!("/api/services/{}/{}", name, version))
+            self.request(Method::GET, &format!("/api/v1/services/{}", service))
                 .param("watch", "true")
                 .param("revision", &format!("{}", revision))
                 .param("timeout", &format!("{}", timeout))
@@ -249,24 +249,23 @@ impl Client {
 
     pub fn watch_service(
         &self,
-        name: &str,
-        version: &str,
+        service: &str,
         revision: Option<u64>,
         timeout: u64,
     ) -> mpsc::UnboundedReceiver<ServiceResult> {
-        let (name, version) = (name.to_string(), version.to_string());
+        let service = service.to_string();
         let (tx, rx) = mpsc::unbounded();
         spawn(loop_fn(
             (self.clone(), revision),
             move |(client, revision)| {
-                let (name, version) = (name.clone(), version.clone());
+                let service = service.clone();
                 let tx = tx.clone();
                 match revision {
-                    Some(rev) => client.watch_service_once(&name, &version, rev, timeout),
-                    None => Box::new(client.get_service(&name, &version).map(Some)),
+                    Some(rev) => client.watch_service_once(&service, rev, timeout),
+                    None => Box::new(client.get_service(&service).map(Some)),
                 }
                 .or_else(move |e| {
-                    error!("watch service({}:{}) error: {}", &name, &version, e);
+                    error!("watch service({}) error: {}", &service, e);
                     Delay::new(Instant::now() + Duration::from_secs(5))
                         .map(|_| None)
                         .or_else(|e| {
@@ -321,22 +320,27 @@ pub struct ServiceEndpoint {
     pub config: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Service {
-    pub name: String,
-    pub version: String,
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ZoneService {
+    pub service: String,
+    pub zone: String,
     #[serde(rename = "type")]
     pub typ: String,
     pub proto: Option<String>,
     pub description: Option<String>,
 
+    #[serde(skip_serializing_if = "Vec::is_empty", default = "Vec::new")]
     pub endpoints: Vec<ServiceEndpoint>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Service {
+    pub zones: HashMap<String, ZoneService>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ServiceResult {
     pub service: Service,
-    #[allow(dead_code)]
     pub revision: u64,
 }
 
@@ -344,22 +348,6 @@ pub struct ServiceResult {
 pub struct LeaseGrantResult {
     pub lease_id: i64,
     pub ttl: i64,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct PlugRequest {
-    pub ttl: Option<i64>,
-    pub lease_id: Option<i64>,
-    pub desc: Service,
-    pub endpoint: ServiceEndpoint,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct PlugAllRequest<'a> {
-    pub ttl: Option<i64>,
-    pub lease_id: Option<i64>,
-    pub desces: &'a [Service],
-    pub endpoint: ServiceEndpoint,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -381,27 +369,5 @@ impl Item {
         for<'de> T: Deserialize<'de>,
     {
         serde_yaml::from_str(&self.value)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::Client;
-    use super::Config;
-
-    fn client() -> Client {
-        let config = Config {
-            endpoint: "https://localhost:4433".to_owned(),
-            ca_file: Some("cacert.pem".to_owned()),
-            cert_key_file: None,
-        };
-        Client::new(config).unwrap()
-    }
-
-    #[test]
-    fn test_get() {
-        let cli = client();
-        let item = cli.get("fms.testkey").unwrap();
-        println!("item: {:?}", item);
     }
 }

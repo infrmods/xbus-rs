@@ -74,7 +74,8 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                     .iter()
                     .map(|(k, v)| {
                         format!("{}={}", k, percent_encode(v.as_bytes(), DEFAULT_ENCODE_SET))
-                    }).collect::<Vec<String>>()
+                    })
+                    .collect::<Vec<String>>()
                     .join("&"),
             );
         }

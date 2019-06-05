@@ -1,4 +1,4 @@
-use client::{Client, LeaseGrantResult, PlugResult, Service, ServiceEndpoint};
+use client::{Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
 use error::Error;
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
@@ -12,7 +12,7 @@ const GRANT_RETRY_INTERVAL: u64 = 5;
 
 enum Cmd {
     UpdateEndpoint(ServiceEndpoint),
-    Plug(Service, oneshot::Sender<Result<(), Error>>),
+    Plug(ZoneService, oneshot::Sender<Result<(), Error>>),
     Unplug(String, String),
     Cancel(String, String),
     Clear(oneshot::Sender<()>),
@@ -34,7 +34,7 @@ impl ServiceKeeper {
         let _ = self.cmd_tx.unbounded_send(Cmd::UpdateEndpoint(endpoint));
     }
 
-    pub fn plug(&self, service: &Service) -> Box<Future<Item = (), Error = Error> + Send> {
+    pub fn plug(&self, service: &ZoneService) -> Box<Future<Item = (), Error = Error> + Send> {
         let (tx, rx) = oneshot::channel();
         if self
             .cmd_tx
@@ -50,10 +50,10 @@ impl ServiceKeeper {
         }))
     }
 
-    pub fn unplug<S: Into<String>>(&self, name: S, version: S) {
+    pub fn unplug<S: Into<String>>(&self, service: S, zone: S) {
         let _ = self
             .cmd_tx
-            .unbounded_send(Cmd::Unplug(name.into(), version.into()));
+            .unbounded_send(Cmd::Unplug(service.into(), zone.into()));
     }
 
     pub fn clear(&self) -> oneshot::Receiver<()> {
@@ -87,7 +87,7 @@ struct KeepTask {
     endpoint: ServiceEndpoint,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
-    services: HashMap<(String, String), Service>,
+    services: HashMap<(String, String), ZoneService>,
     lease_result: Option<LeaseGrantResult>,
     lease_future: Option<Box<Future<Item = LeaseGrantResult, Error = Error> + Send>>,
     replug_future: Option<Box<Future<Item = PlugResult, Error = Error> + Send>>,
@@ -148,7 +148,7 @@ impl KeepTask {
 
     fn replug_all(&mut self, retry: bool) {
         if let Some(ref lease_result) = self.lease_result {
-            let services: Vec<Service> = self.services.values().cloned().collect();
+            let services: Vec<ZoneService> = self.services.values().cloned().collect();
             if retry {
                 let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
                     .map_err(|e| Error::Other(format!("replug sleep fail: {}", e)));
@@ -173,7 +173,7 @@ impl KeepTask {
         }
     }
 
-    fn plug_one(&mut self, service: Service, tx: oneshot::Sender<Result<(), Error>>) {
+    fn plug_one(&mut self, service: ZoneService, tx: oneshot::Sender<Result<(), Error>>) {
         if let Some(ref lease_result) = self.lease_result {
             let cmd_tx = self.cmd_tx.clone();
             spawn(
@@ -186,7 +186,7 @@ impl KeepTask {
                             }
                             Err(e) => {
                                 if !e.can_retry() {
-                                    let _ = cmd_tx.send(Cmd::Cancel(service.name, service.version));
+                                    let _ = cmd_tx.send(Cmd::Cancel(service.service, service.zone));
                                 }
                                 let _ = tx.send(Err(e));
                             }
@@ -198,24 +198,19 @@ impl KeepTask {
             error!("missing lease result");
         }
     }
-}
 
-impl Future for KeepTask {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<(), ()> {
+    fn process_cmds(&mut self) -> bool {
         loop {
             match self.cmd_rx.poll() {
                 Ok(Async::Ready(Some(cmd))) => match cmd {
                     Cmd::UpdateEndpoint(endpoint) => {
                         self.endpoint = endpoint;
-                        if self.services.len() > 0 {
+                        if !self.services.is_empty() {
                             self.new_lease(false);
                         }
                     }
                     Cmd::Plug(service, tx) => {
-                        let key = (service.name.clone(), service.version.clone());
+                        let key = (service.service.clone(), service.zone.clone());
                         if self.services.contains_key(&key) {
                             let _ = tx.send(Err(Error::Other(format!(
                                 "{}:{} has been plugged",
@@ -232,20 +227,27 @@ impl Future for KeepTask {
                             }
                         }
                     }
-                    Cmd::Unplug(name, version) => {
-                        let key = (name, version);
+                    Cmd::Unplug(service, zone) => {
+                        let key = (service, zone);
                         self.replug_backs.remove(&key);
                         if self.services.remove(&key).is_some() {
-                            spawn(self.client.unplug_service(&key.0, &key.1).then(move |r| {
-                                if let Err(e) = r {
-                                    error!("unplug service {}:{} fail: {}", key.0, key.1, e);
-                                }
-                                Ok(())
-                            }));
+                            spawn(
+                                self.client
+                                    .unplug_service(&key.0, &key.1, &self.endpoint.address)
+                                    .then(move |r| {
+                                        if let Err(e) = r {
+                                            error!(
+                                                "unplug service {}:{} fail: {}",
+                                                key.0, key.1, e
+                                            );
+                                        }
+                                        Ok(())
+                                    }),
+                            );
                         }
                     }
-                    Cmd::Cancel(name, version) => {
-                        let key = (name, version);
+                    Cmd::Cancel(service, zone) => {
+                        let key = (service, zone);
                         self.services.remove(&key);
                         self.replug_backs.remove(&key);
                     }
@@ -276,17 +278,21 @@ impl Future for KeepTask {
                                 Ok(())
                             }));
                         }
-                        return Ok(Async::Ready(()));
+                        return false;
                     }
                 },
                 Ok(Async::NotReady) => {
                     break;
                 }
                 _ => {
-                    return Ok(Async::Ready(()));
+                    return false;
                 }
             }
         }
+        true
+    }
+
+    fn process_futures(&mut self) {
         let mut ct = true;
         while ct {
             ct = false;
@@ -315,8 +321,8 @@ impl Future for KeepTask {
                             let _ = sender.send(Ok(()));
                         }
                     }
-                    Err(Error::NotPermitted(_, names)) => {
-                        let set: HashSet<String> = HashSet::from_iter(names);
+                    Err(Error::NotPermitted(_, services)) => {
+                        let set: HashSet<String> = HashSet::from_iter(services);
                         self.services.retain(|k, _| {
                             if set.contains(&k.0) {
                                 error!("plug service not permitted: {}:{}", k.0, k.1);
@@ -363,6 +369,19 @@ impl Future for KeepTask {
                 }
             }
         }
+    }
+}
+
+impl Future for KeepTask {
+    type Item = ();
+    type Error = ();
+
+    #[allow(clippy::map_entry)]
+    fn poll(&mut self) -> Poll<(), ()> {
+        if !self.process_cmds() {
+            return Ok(Async::Ready(()));
+        }
+        self.process_futures();
         Ok(Async::NotReady)
     }
 }

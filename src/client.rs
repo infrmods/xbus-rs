@@ -339,6 +339,12 @@ pub struct ZoneService {
     pub endpoints: Vec<ServiceEndpoint>,
 }
 
+impl ZoneService {
+    pub fn addresses<'a>(&'a self) -> impl Iterator<Item = SocketAddr> + 'a {
+        self.endpoints.iter().map(|e| e.address.clone())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Service {
     pub zones: HashMap<String, ZoneService>,

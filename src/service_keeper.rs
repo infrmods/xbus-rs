@@ -1,4 +1,4 @@
-use client::{Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
+use super::client::{Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
 use error::Error;
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
@@ -233,7 +233,11 @@ impl KeepTask {
                         if self.services.remove(&key).is_some() {
                             spawn(
                                 self.client
-                                    .unplug_service(&key.0, &key.1, &self.endpoint.address)
+                                    .unplug_service(
+                                        &key.0,
+                                        &key.1,
+                                        &self.endpoint.address.to_string(),
+                                    )
                                     .then(move |r| {
                                         if let Err(e) = r {
                                             error!(

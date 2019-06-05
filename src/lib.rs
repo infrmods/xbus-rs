@@ -24,12 +24,13 @@ pub mod error;
 mod https;
 #[macro_use]
 mod request;
+mod addr_serde;
 pub mod client;
 mod service_keeper;
 
-pub use client::Client;
-pub use client::Config;
-pub use error::Error;
-pub use service_keeper::ServiceKeeper;
+pub use self::client::Client;
+pub use self::client::Config;
+pub use self::error::Error;
+pub use self::service_keeper::ServiceKeeper;
 
 pub const DEFAULT_ZONE: &str = "default";

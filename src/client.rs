@@ -1,3 +1,4 @@
+use super::addr_serde;
 use error::Error;
 use futures::future::{loop_fn, Loop};
 use futures::prelude::*;
@@ -11,6 +12,7 @@ use serde_json;
 use serde_yaml;
 use service_keeper::ServiceKeeper;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::spawn;
 use tokio::timer::Delay;
@@ -316,7 +318,11 @@ pub struct Item {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceEndpoint {
-    pub address: String,
+    #[serde(
+        serialize_with = "addr_serde::serialize_address",
+        deserialize_with = "addr_serde::deserialize_address"
+    )]
+    pub address: SocketAddr,
     pub config: Option<String>,
 }
 

@@ -347,6 +347,7 @@ impl ZoneService {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Service {
+    pub service: String,
     pub zones: HashMap<String, ZoneService>,
 }
 

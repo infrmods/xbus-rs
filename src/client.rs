@@ -249,6 +249,18 @@ impl Client {
         )
     }
 
+    pub fn delete_service(
+        &self,
+        service: &str,
+        zone: Option<&str>,
+    ) -> Box<Future<Item = (), Error = Error> + Send> {
+        Box::new(
+            self.request(Method::DELETE, &format!("/api/v1/services/{}", service))
+                .param("zone", zone.unwrap_or(""))
+                .get_ok(),
+        )
+    }
+
     pub fn watch_service(
         &self,
         service: &str,

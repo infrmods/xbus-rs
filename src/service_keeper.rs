@@ -11,6 +11,7 @@ use tokio::timer::Delay;
 const GRANT_RETRY_INTERVAL: u64 = 5;
 
 enum Cmd {
+    Start,
     UpdateEndpoint(ServiceEndpoint),
     Plug(ZoneService, oneshot::Sender<Result<(), Error>>),
     Unplug(String, String),
@@ -28,6 +29,10 @@ impl ServiceKeeper {
         let (tx, rx) = mpsc::unbounded();
         spawn(KeepTask::new(client, tx.clone(), rx, ttl, endpoint));
         ServiceKeeper { cmd_tx: tx }
+    }
+
+    pub fn start(&self) {
+        let _ = self.cmd_tx.unbounded_send(Cmd::Start);
     }
 
     pub fn update_endpoint(&self, endpoint: ServiceEndpoint) {
@@ -83,6 +88,7 @@ impl ServiceKeeper {
 
 struct KeepTask {
     client: Client,
+    started: bool,
     ttl: Option<i64>,
     endpoint: ServiceEndpoint,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
@@ -105,6 +111,7 @@ impl KeepTask {
     ) -> KeepTask {
         KeepTask {
             client: client.clone(),
+            started: false,
             ttl,
             endpoint,
             services: HashMap::new(),
@@ -203,9 +210,21 @@ impl KeepTask {
         loop {
             match self.cmd_rx.poll() {
                 Ok(Async::Ready(Some(cmd))) => match cmd {
+                    Cmd::Start => {
+                        if !self.started {
+                            self.started = true;
+                            if self.lease_result.is_none() {
+                                if self.lease_future.is_none() {
+                                    self.new_lease(false);
+                                }
+                            } else {
+                                self.replug_all(false);
+                            }
+                        }
+                    }
                     Cmd::UpdateEndpoint(endpoint) => {
                         self.endpoint = endpoint;
-                        if !self.services.is_empty() {
+                        if !self.services.is_empty() && self.started {
                             self.new_lease(false);
                         }
                     }
@@ -216,21 +235,26 @@ impl KeepTask {
                                 "{}:{} has been plugged",
                                 key.0, key.1
                             ))));
-                        } else if self.lease_result.is_some() {
-                            self.services.insert(key, service.clone());
-                            self.plug_one(service, tx);
                         } else {
                             self.services.insert(key.clone(), service.clone());
-                            self.replug_backs.insert(key, tx);
-                            if self.lease_future.is_none() {
-                                self.new_lease(false);
+                            if self.started {
+                                if self.lease_result.is_some() {
+                                    self.plug_one(service, tx);
+                                } else {
+                                    self.replug_backs.insert(key, tx);
+                                    if self.lease_future.is_none() {
+                                        self.new_lease(false);
+                                    }
+                                }
+                            } else {
+                                self.replug_backs.insert(key, tx);
                             }
                         }
                     }
                     Cmd::Unplug(service, zone) => {
                         let key = (service, zone);
                         self.replug_backs.remove(&key);
-                        if self.services.remove(&key).is_some() {
+                        if self.services.remove(&key).is_some() && self.started {
                             spawn(
                                 self.client
                                     .unplug_service(

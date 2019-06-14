@@ -407,6 +407,7 @@ impl Future for KeepTask {
     #[allow(clippy::map_entry)]
     fn poll(&mut self) -> Poll<(), ()> {
         if !self.process_cmds() {
+            warn!("service keeper exit");
             return Ok(Async::Ready(()));
         }
         self.process_futures();

@@ -18,6 +18,7 @@ use tokio::spawn;
 use tokio::timer::Delay;
 
 const DEFAULT_THREADS: usize = 4;
+const DEFAULT_REQUEST_TIMEOUT: u64 = 5;
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct Config {
@@ -27,6 +28,7 @@ pub struct Config {
     pub ca_file: Option<String>,
     pub cert_key_file: Option<(String, String)>,
     pub max_idle_connections: Option<usize>,
+    pub request_timeout: Duration,
 }
 
 impl Config {
@@ -38,6 +40,7 @@ impl Config {
             ca_file: None,
             cert_key_file: None,
             max_idle_connections: None,
+            request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT),
         }
     }
 
@@ -115,7 +118,22 @@ impl Client {
         method: Method,
         path: &'a str,
     ) -> RequestBuilder<'a, HttpsConnector<HttpConnector>> {
-        let mut builder = RequestBuilder::new(&self.client, &self.config.endpoint, method, path);
+        self.request_timeout(method, path, self.config.request_timeout)
+    }
+
+    fn request_timeout<'a>(
+        &'a self,
+        method: Method,
+        path: &'a str,
+        timeout: Duration,
+    ) -> RequestBuilder<'a, HttpsConnector<HttpConnector>> {
+        let mut builder = RequestBuilder::new(
+            &self.client,
+            &self.config.endpoint,
+            method,
+            path,
+            Some(timeout),
+        );
         if let Some(ref dev_app) = self.config.dev_app {
             builder = builder.header("Dev-App", dev_app);
         }
@@ -239,13 +257,17 @@ impl Client {
         timeout: u64,
     ) -> Box<Future<Item = Option<ServiceResult>, Error = Error> + Send> {
         Box::new(
-            self.request(Method::GET, &format!("/api/v1/services/{}", service))
-                .param("watch", "true")
-                .param("revision", &format!("{}", revision))
-                .param("timeout", &format!("{}", timeout))
-                .send()
-                .and_then(|r| Ok(Some(r)))
-                .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
+            self.request_timeout(
+                Method::GET,
+                &format!("/api/v1/services/{}", service),
+                Duration::from_secs(timeout) + self.config.request_timeout,
+            )
+            .param("watch", "true")
+            .param("revision", &format!("{}", revision))
+            .param("timeout", &format!("{}", timeout))
+            .send()
+            .and_then(|r| Ok(Some(r)))
+            .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
         )
     }
 

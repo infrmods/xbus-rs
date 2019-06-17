@@ -4,7 +4,7 @@ use serde_json::Error as JsonError;
 use serde_yaml::Error as YamlError;
 use std::error::Error as StdError;
 use std::fmt::{Display, Error as FmtError, Formatter};
-use std::io::Error as IOError;
+use std::io::{Error as IOError, ErrorKind};
 use url::ParseError;
 
 #[derive(Debug)]
@@ -19,13 +19,16 @@ pub enum Error {
 }
 
 impl Error {
+    pub fn io_timeout() -> Error {
+        Error::Io(IOError::new(ErrorKind::TimedOut, "timeout"))
+    }
+
     pub fn is_timeout(&self) -> bool {
-        if let Error::Request(code, _) = self {
-            if code == "DEADLINE_EXCEEDED" {
-                return true;
-            }
+        match self {
+            Error::Io(e) => e.kind() == ErrorKind::TimedOut,
+            Error::Request(code, _) => code == "DEADLINE_EXCEEDED",
+            _ => false,
         }
-        false
     }
 
     pub fn is_not_found(&self) -> bool {

@@ -1,5 +1,6 @@
 use error::Error;
 use futures::prelude::*;
+
 use http::request::Builder;
 use http::{Method, Uri};
 use hyper::client::connect::Connect;
@@ -9,6 +10,8 @@ use percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_string};
 use std::collections::HashMap;
+use std::time::Duration;
+use tokio::timer::Timeout;
 use url::form_urlencoded;
 
 pub struct RequestBuilder<'a, C: 'static + Connect> {
@@ -18,6 +21,7 @@ pub struct RequestBuilder<'a, C: 'static + Connect> {
     params: HashMap<&'a str, &'a str>,
     body: Option<Body>,
     builder: Builder,
+    timeout: Option<Duration>,
 }
 
 impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
@@ -26,6 +30,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         endpoint: &'a str,
         method: Method,
         path: &'a str,
+        timeout: Option<Duration>,
     ) -> RequestBuilder<'a, C> {
         let mut builder = Builder::new();
         builder.method(method);
@@ -36,6 +41,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
             params: HashMap::new(),
             body: None,
             builder,
+            timeout,
         }
     }
 
@@ -109,6 +115,15 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                     Ok(json_rep)
                 })
             });
+        if let Some(timeout) = self.timeout {
+            return Box::new(Timeout::new(resp, timeout).map_err(|e| {
+                if e.is_inner() {
+                    e.into_inner().unwrap()
+                } else {
+                    Error::io_timeout()
+                }
+            }));
+        }
         Box::new(resp)
     }
 

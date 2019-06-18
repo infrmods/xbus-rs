@@ -40,14 +40,10 @@ impl ServiceKeeper {
     }
 
     pub fn plug(&self, service: &ZoneService) -> Box<Future<Item = (), Error = Error> + Send> {
-        self._plug(service, false)
+        self.plug_replaceable(service, false)
     }
 
-    pub fn replace(&self, service: &ZoneService) -> Box<Future<Item = (), Error = Error> + Send> {
-        self._plug(service, true)
-    }
-
-    fn _plug(
+    pub fn plug_replaceable(
         &self,
         service: &ZoneService,
         replaceable: bool,

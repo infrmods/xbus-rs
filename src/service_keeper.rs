@@ -125,12 +125,12 @@ impl KeepTask {
         }
     }
 
-    fn new_lease(&mut self, retry: bool) {
-        if retry {
+    fn new_lease(&mut self, delay_new: bool) {
+        if delay_new {
             let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
                 .map_err(|e| Error::Other(format!("lease keep sleep fail: {}", e)));
             let (client, ttl) = (self.client.clone(), self.ttl);
-            self.lease_future = Some(Box::new(delay.then(move |_| client.grant_lease(ttl))));
+            self.lease_future = Some(Box::new(delay.and_then(move |_| client.grant_lease(ttl))));
         } else {
             self.lease_future = Some(Box::new(self.client.grant_lease(self.ttl)));
         }
@@ -146,17 +146,17 @@ impl KeepTask {
                     .map_err(|e| Error::Other(format!("keep lease sleep fail: {}", e)));
             let (client, lease_id) = (self.client.clone(), lease_result.lease_id);
             self.lease_keep_future = Some(Box::new(
-                delay.then(move |_| client.keepalive_lease(lease_id)),
+                delay.and_then(move |_| client.keepalive_lease(lease_id)),
             ));
         } else {
             error!("missing lease result");
         }
     }
 
-    fn replug_all(&mut self, retry: bool) {
+    fn replug_all(&mut self, delay_plug: bool) {
         if let Some(ref lease_result) = self.lease_result {
             let services: Vec<ZoneService> = self.services.values().cloned().collect();
-            if retry {
+            if delay_plug {
                 let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
                     .map_err(|e| Error::Other(format!("replug sleep fail: {}", e)));
                 let (client, endpoint, lease_id) = (
@@ -164,7 +164,7 @@ impl KeepTask {
                     self.endpoint.clone(),
                     lease_result.lease_id,
                 );
-                self.replug_future = Some(Box::new(delay.then(move |_| {
+                self.replug_future = Some(Box::new(delay.and_then(move |_| {
                     client.plug_all_services(&services, &endpoint, Some(lease_id), None)
                 })));
             } else {
@@ -206,6 +206,7 @@ impl KeepTask {
         }
     }
 
+    #[allow(clippy::map_entry)]
     fn process_cmds(&mut self) -> bool {
         loop {
             match self.cmd_rx.poll() {
@@ -335,22 +336,24 @@ impl KeepTask {
                         ct = true;
                     }
                     Err(e) => {
-                        self.new_lease(true);
+                        self.new_lease(!e.is_timeout());
                         ct = true;
                         error!("grant lease fail: {}", e);
                     }
-                    _ => {}
+                    Ok(Async::NotReady) => {}
                 }
             }
             if let Some(r) = self.replug_future.as_mut().map(|f| f.poll()) {
                 match r {
                     Ok(Async::Ready(_)) => {
+                        info!("services replugged ok");
                         self.replug_future = None;
                         for (_, sender) in self.replug_backs.drain() {
                             let _ = sender.send(Ok(()));
                         }
                     }
                     Err(Error::NotPermitted(_, services)) => {
+                        warn!("not permitted services: {}", services.join(", "));
                         let set: HashSet<String> = HashSet::from_iter(services);
                         self.services.retain(|k, _| {
                             if set.contains(&k.0) {
@@ -375,11 +378,11 @@ impl KeepTask {
                         ct = true;
                     }
                     Err(e) => {
-                        error!("replug fail: {}", e);
-                        self.replug_all(true);
+                        error!("services replug failed: {}", e);
+                        self.replug_all(!e.is_timeout());
                         ct = true;
                     }
-                    _ => {}
+                    Ok(Async::NotReady) => {}
                 }
             }
             if let Some(r) = self.lease_keep_future.as_mut().map(|f| f.poll()) {
@@ -394,7 +397,7 @@ impl KeepTask {
                         self.new_lease(false);
                         ct = true;
                     }
-                    _ => {}
+                    Ok(Async::NotReady) => {}
                 }
             }
         }
@@ -405,7 +408,6 @@ impl Future for KeepTask {
     type Item = ();
     type Error = ();
 
-    #[allow(clippy::map_entry)]
     fn poll(&mut self) -> Poll<(), ()> {
         if !self.process_cmds() {
             warn!("service keeper exit");

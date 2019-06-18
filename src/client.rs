@@ -375,7 +375,7 @@ pub struct ZoneService {
 
 impl ZoneService {
     pub fn addresses<'a>(&'a self) -> impl Iterator<Item = SocketAddr> + 'a {
-        self.endpoints.iter().map(|e| e.address.clone())
+        self.endpoints.iter().map(|e| e.address)
     }
 }
 

@@ -13,7 +13,7 @@ const GRANT_RETRY_INTERVAL: u64 = 5;
 enum Cmd {
     Start,
     UpdateEndpoint(ServiceEndpoint),
-    Plug(ZoneService, oneshot::Sender<Result<(), Error>>),
+    Plug(ZoneService, oneshot::Sender<Result<(), Error>>, bool),
     Unplug(String, String),
     Cancel(String, String),
     Clear(oneshot::Sender<()>),
@@ -40,10 +40,22 @@ impl ServiceKeeper {
     }
 
     pub fn plug(&self, service: &ZoneService) -> Box<Future<Item = (), Error = Error> + Send> {
+        self._plug(service, false)
+    }
+
+    pub fn replace(&self, service: &ZoneService) -> Box<Future<Item = (), Error = Error> + Send> {
+        self._plug(service, true)
+    }
+
+    fn _plug(
+        &self,
+        service: &ZoneService,
+        replaceable: bool,
+    ) -> Box<Future<Item = (), Error = Error> + Send> {
         let (tx, rx) = oneshot::channel();
         if self
             .cmd_tx
-            .unbounded_send(Cmd::Plug(service.clone(), tx))
+            .unbounded_send(Cmd::Plug(service.clone(), tx, replaceable))
             .is_err()
         {
             return Box::new(Err(Error::Other("keep task closed".to_string())).into_future());
@@ -213,7 +225,6 @@ impl KeepTask {
         }
     }
 
-    #[allow(clippy::map_entry)]
     fn process_cmds(&mut self) -> bool {
         loop {
             match self.cmd_rx.poll() {
@@ -236,9 +247,9 @@ impl KeepTask {
                             self.new_lease(false);
                         }
                     }
-                    Cmd::Plug(service, tx) => {
+                    Cmd::Plug(service, tx, replaceable) => {
                         let key = (service.service.clone(), service.zone.clone());
-                        if self.services.contains_key(&key) {
+                        if self.services.contains_key(&key) && !replaceable {
                             let _ = tx.send(Err(Error::Other(format!(
                                 "{}:{} has been plugged",
                                 key.0, key.1

@@ -140,6 +140,7 @@ impl KeepTask {
     }
 
     fn keep_lease(&mut self) {
+        self.lease_keep_future = None;
         if let Some(ref mut lease_result) = self.lease_result {
             let delay =
                 Delay::new(Instant::now() + Duration::from_secs(lease_result.ttl as u64 / 2))
@@ -154,7 +155,13 @@ impl KeepTask {
     }
 
     fn replug_all(&mut self, delay_plug: bool) {
+        self.replug_future = None;
         if let Some(ref lease_result) = self.lease_result {
+            if self.services.is_empty() {
+                info!("empty services, replug ignored");
+                return;
+            }
+
             let services: Vec<ZoneService> = self.services.values().cloned().collect();
             if delay_plug {
                 let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
@@ -345,11 +352,17 @@ impl KeepTask {
             }
             if let Some(r) = self.replug_future.as_mut().map(|f| f.poll()) {
                 match r {
-                    Ok(Async::Ready(_)) => {
+                    Ok(Async::Ready(result)) => {
                         info!("services replugged ok");
                         self.replug_future = None;
                         for (_, sender) in self.replug_backs.drain() {
                             let _ = sender.send(Ok(()));
+                        }
+                        if let Some(lease_result) = &mut self.lease_result {
+                            if lease_result.lease_id != result.lease_id {
+                                warn!("lease_id changed: {}", result.lease_id);
+                                lease_result.lease_id = result.lease_id
+                            }
                         }
                     }
                     Err(Error::NotPermitted(_, services)) => {

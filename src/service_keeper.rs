@@ -342,7 +342,7 @@ impl KeepTask {
             if let Some(r) = self.lease_future.as_mut().map(|f| f.poll()) {
                 match r {
                     Ok(Async::Ready(result)) => {
-                        info!("grant lease ok: {}", result.lease_id);
+                        info!("grant lease ok: {:x}", result.lease_id);
                         self.lease_future = None;
                         self.lease_result = Some(result);
                         self.keep_lease();

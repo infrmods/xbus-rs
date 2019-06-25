@@ -106,10 +106,8 @@ impl ServiceKeeper {
         rx
     }
 
-    pub fn notify_node_online(&self) -> mpsc::UnboundedReceiver<()> {
-        let (tx, rx) = mpsc::unbounded();
+    pub fn notify_node_online(&self, tx: mpsc::UnboundedSender<()>) {
         let _ = self.cmd_tx.unbounded_send(Cmd::NotifyNodeOnline(tx));
-        rx
     }
 }
 

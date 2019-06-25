@@ -18,6 +18,7 @@ enum Cmd {
     Cancel(String, String),
     Clear(oneshot::Sender<()>),
     RevokeAndClose(oneshot::Sender<()>),
+    NotifyNodeOnline(mpsc::UnboundedSender<()>),
 }
 
 pub struct ServiceKeeper {
@@ -104,6 +105,12 @@ impl ServiceKeeper {
         }
         rx
     }
+
+    pub fn notify_node_online(&self) -> mpsc::UnboundedReceiver<()> {
+        let (tx, rx) = mpsc::unbounded();
+        let _ = self.cmd_tx.unbounded_send(Cmd::NotifyNodeOnline(tx));
+        rx
+    }
 }
 
 struct KeepTask {
@@ -120,6 +127,7 @@ struct KeepTask {
     replug_future: Option<Box<Future<Item = PlugResult, Error = Error> + Send>>,
     replug_backs: HashMap<(String, String), oneshot::Sender<Result<(), Error>>>,
     lease_keep_future: Option<Box<Future<Item = (), Error = Error> + Send>>,
+    online_notifiers: Vec<mpsc::UnboundedSender<()>>,
 }
 
 impl KeepTask {
@@ -145,6 +153,7 @@ impl KeepTask {
             replug_future: None,
             replug_backs: HashMap::new(),
             lease_keep_future: None,
+            online_notifiers: Vec::new(),
         }
     }
 
@@ -344,6 +353,9 @@ impl KeepTask {
                         }
                         return false;
                     }
+                    Cmd::NotifyNodeOnline(tx) => {
+                        self.online_notifiers.push(tx);
+                    }
                 },
                 Ok(Async::NotReady) => {
                     break;
@@ -364,6 +376,10 @@ impl KeepTask {
                 match r {
                     Ok(Async::Ready(result)) => {
                         info!("grant lease ok: {:x}", result.lease_id);
+                        if result.new_app_node == Some(true) {
+                            self.online_notifiers
+                                .retain(|tx| tx.unbounded_send(()).is_ok());
+                        }
                         self.lease_future = None;
                         self.lease_result = Some(result);
                         self.keep_lease();

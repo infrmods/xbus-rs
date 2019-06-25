@@ -411,6 +411,7 @@ pub struct ServiceResult {
 pub struct LeaseGrantResult {
     pub lease_id: i64,
     pub ttl: i64,
+    pub new_app_node: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

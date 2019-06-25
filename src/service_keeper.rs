@@ -18,7 +18,7 @@ enum Cmd {
     Cancel(String, String),
     Clear(oneshot::Sender<()>),
     RevokeAndClose(oneshot::Sender<()>),
-    NotifyNodeOnline(mpsc::UnboundedSender<()>),
+    NotifyNodeOnline(mpsc::UnboundedSender<bool>),
 }
 
 pub struct ServiceKeeper {
@@ -106,7 +106,7 @@ impl ServiceKeeper {
         rx
     }
 
-    pub fn notify_node_online(&self, tx: mpsc::UnboundedSender<()>) {
+    pub fn notify_node_online(&self, tx: mpsc::UnboundedSender<bool>) {
         let _ = self.cmd_tx.unbounded_send(Cmd::NotifyNodeOnline(tx));
     }
 }
@@ -125,7 +125,8 @@ struct KeepTask {
     replug_future: Option<Box<Future<Item = PlugResult, Error = Error> + Send>>,
     replug_backs: HashMap<(String, String), oneshot::Sender<Result<(), Error>>>,
     lease_keep_future: Option<Box<Future<Item = (), Error = Error> + Send>>,
-    online_notifiers: Vec<mpsc::UnboundedSender<()>>,
+    is_first_online: bool,
+    online_notifiers: Vec<mpsc::UnboundedSender<bool>>,
 }
 
 impl KeepTask {
@@ -151,6 +152,7 @@ impl KeepTask {
             replug_future: None,
             replug_backs: HashMap::new(),
             lease_keep_future: None,
+            is_first_online: true,
             online_notifiers: Vec::new(),
         }
     }
@@ -375,8 +377,10 @@ impl KeepTask {
                     Ok(Async::Ready(result)) => {
                         info!("grant lease ok: {:x}", result.lease_id);
                         if result.new_app_node == Some(true) {
+                            let is_first_online = self.is_first_online;
                             self.online_notifiers
-                                .retain(|tx| tx.unbounded_send(()).is_ok());
+                                .retain(|tx| tx.unbounded_send(is_first_online).is_ok());
+                            self.is_first_online = false;
                         }
                         self.lease_future = None;
                         self.lease_result = Some(result);

@@ -1,4 +1,4 @@
-use super::client::{Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
+use super::client::{AppNode, Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
 use error::Error;
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
@@ -25,9 +25,21 @@ pub struct ServiceKeeper {
 }
 
 impl ServiceKeeper {
-    pub fn new(client: &Client, ttl: Option<i64>, endpoint: ServiceEndpoint) -> ServiceKeeper {
+    pub fn new(
+        client: &Client,
+        ttl: Option<i64>,
+        app_node: Option<AppNode>,
+        endpoint: ServiceEndpoint,
+    ) -> ServiceKeeper {
         let (tx, rx) = mpsc::unbounded();
-        spawn(KeepTask::new(client, tx.clone(), rx, ttl, endpoint));
+        spawn(KeepTask::new(
+            client,
+            tx.clone(),
+            rx,
+            ttl,
+            app_node,
+            endpoint,
+        ));
         ServiceKeeper { cmd_tx: tx }
     }
 
@@ -99,6 +111,7 @@ struct KeepTask {
     started: bool,
     ttl: Option<i64>,
     endpoint: ServiceEndpoint,
+    app_node: Option<AppNode>,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
     services: HashMap<(String, String), ZoneService>,
@@ -115,12 +128,14 @@ impl KeepTask {
         cmd_tx: mpsc::UnboundedSender<Cmd>,
         cmd_rx: mpsc::UnboundedReceiver<Cmd>,
         ttl: Option<i64>,
+        app_node: Option<AppNode>,
         endpoint: ServiceEndpoint,
     ) -> KeepTask {
         KeepTask {
             client: client.clone(),
             started: false,
             ttl,
+            app_node,
             endpoint,
             services: HashMap::new(),
             cmd_tx,
@@ -134,13 +149,19 @@ impl KeepTask {
     }
 
     fn new_lease(&mut self, delay_new: bool) {
+        let app_node = self.app_node.clone();
         if delay_new {
             let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
                 .map_err(|e| Error::Other(format!("lease keep sleep fail: {}", e)));
             let (client, ttl) = (self.client.clone(), self.ttl);
-            self.lease_future = Some(Box::new(delay.and_then(move |_| client.grant_lease(ttl))));
+            self.lease_future =
+                Some(Box::new(delay.and_then(move |_| {
+                    client.grant_lease(ttl, app_node.as_ref())
+                })));
         } else {
-            self.lease_future = Some(Box::new(self.client.grant_lease(self.ttl)));
+            self.lease_future = Some(Box::new(
+                self.client.grant_lease(self.ttl, app_node.as_ref()),
+            ));
         }
         self.lease_keep_future = None;
         self.lease_result = None;

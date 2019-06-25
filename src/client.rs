@@ -230,12 +230,23 @@ impl Client {
     pub fn grant_lease(
         &self,
         ttl: Option<i64>,
+        app_node: Option<&AppNode>,
     ) -> Box<Future<Item = LeaseGrantResult, Error = Error> + Send> {
         let ttl = ttl.map(|n| format!("{}", n));
         let ttl = ttl.as_ref();
         let mut req = self.request(Method::POST, "/api/leases");
         if let Some(ttl) = ttl {
             req = req.param("ttl", ttl);
+        }
+        if let Some(app_node) = app_node {
+            match form!("app_node" => app_node) {
+                Ok(form) => {
+                    req = req.form(form);
+                }
+                Err(e) => {
+                    return Box::new(Err(e).into_future());
+                }
+            }
         }
         req.send()
     }
@@ -324,8 +335,13 @@ impl Client {
         rx
     }
 
-    pub fn service_keeper(&self, ttl: Option<i64>, endpoint: ServiceEndpoint) -> ServiceKeeper {
-        ServiceKeeper::new(&self, ttl, endpoint)
+    pub fn service_keeper(
+        &self,
+        ttl: Option<i64>,
+        app_node: Option<AppNode>,
+        endpoint: ServiceEndpoint,
+    ) -> ServiceKeeper {
+        ServiceKeeper::new(&self, ttl, app_node, endpoint)
     }
 }
 
@@ -417,4 +433,11 @@ impl Item {
     {
         serde_yaml::from_str(&self.value)
     }
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct AppNode {
+    pub address: String,
+    pub label: Option<String>,
+    pub config: String,
 }

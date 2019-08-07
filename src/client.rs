@@ -261,6 +261,18 @@ impl Client {
             .get_ok()
     }
 
+    pub fn revoke_lease_with_node(
+        &self,
+        lease_id: i64,
+        address: &str,
+        label: Option<&str>,
+    ) -> Box<Future<Item = (), Error = Error> + Send> {
+        self.request(Method::DELETE, &format!("/api/leases/{}", lease_id))
+            .param("rm_node_address", address)
+            .param_opt("app_node_label", label)
+            .get_ok()
+    }
+
     pub fn watch_service_once(
         &self,
         service: &str,

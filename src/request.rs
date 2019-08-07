@@ -50,6 +50,13 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         self
     }
 
+    pub fn param_opt(mut self, name: &'a str, value: Option<&'a str>) -> RequestBuilder<'a, C> {
+        if let Some(val) = value {
+            self.params.insert(name, val);
+        }
+        self
+    }
+
     pub fn header(mut self, name: &'a str, value: &'a str) -> RequestBuilder<'a, C> {
         self.builder.header(name, value);
         self

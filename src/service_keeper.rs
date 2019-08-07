@@ -325,32 +325,14 @@ impl KeepTask {
                         self.replug_backs.remove(&key);
                     }
                     Cmd::Clear(tx) => {
-                        if let Some(ref lease_result) = self.lease_result.take() {
-                            let lease_id = lease_result.lease_id;
-                            spawn(self.client.revoke_lease(lease_id).then(move |r| {
-                                if let Err(e) = r {
-                                    error!("revoke lease {} fail: {}", lease_id, e);
-                                }
-                                let _ = tx.send(());
-                                Ok(())
-                            }));
-                        }
+                        self.revoke_lease(tx);
                         self.lease_keep_future = None;
                         self.replug_future = None;
                         self.replug_backs.clear();
                         self.services.clear();
                     }
                     Cmd::RevokeAndClose(tx) => {
-                        if let Some(ref lease_result) = self.lease_result {
-                            let lease_id = lease_result.lease_id;
-                            spawn(self.client.revoke_lease(lease_id).then(move |r| {
-                                if let Err(e) = r {
-                                    error!("revoke lease {} fail: {}", lease_id, e);
-                                }
-                                let _ = tx.send(());
-                                Ok(())
-                            }));
-                        }
+                        self.revoke_lease(tx);
                         return false;
                     }
                     Cmd::NotifyNodeOnline(tx) => {
@@ -366,6 +348,27 @@ impl KeepTask {
             }
         }
         true
+    }
+
+    fn revoke_lease(&self, tx: oneshot::Sender<()>) {
+        if let Some(ref lease_result) = self.lease_result {
+            let lease_id = lease_result.lease_id;
+            let fut = match &self.app_node {
+                Some(node) => self.client.revoke_lease_with_node(
+                    lease_id,
+                    &node.address,
+                    node.label.as_ref().map(|s| s.as_str()),
+                ),
+                None => self.client.revoke_lease(lease_id),
+            };
+            spawn(fut.then(move |r| {
+                if let Err(e) = r {
+                    error!("revoke lease {} fail: {}", lease_id, e);
+                }
+                let _ = tx.send(());
+                Ok(())
+            }));
+        }
     }
 
     fn process_futures(&mut self) {

@@ -1,8 +1,9 @@
 use super::addr_serde;
-use error::Error;
+use super::app_watcher::WatchTask;
+use super::error::Error;
 use futures::future::{loop_fn, Loop};
 use futures::prelude::*;
-use futures::sync::mpsc;
+use futures::sync::{mpsc, oneshot};
 use https::{ClientConfigPemExt, HttpsConnector};
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
@@ -287,20 +288,33 @@ impl Client {
 
     pub fn watch_app_nodes_once(
         &self,
-        name: &str,
+        app: &str,
         label: Option<&str>,
         revision: u64,
         timeout: u64,
     ) -> Box<Future<Item = Option<AppNodes>, Error = Error> + Send> {
         Box::new(
-            self.request(Method::GET, &format!("/api/apps/{}/nodes", name))
-                .param_opt("label", label)
-                .param("revision", &format!("{}", revision))
-                .param("timeout", &format!("{}", timeout))
-                .send()
-                .and_then(|r| Ok(Some(r)))
-                .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
+            self.request_timeout(
+                Method::GET,
+                &format!("/api/apps/{}/nodes", app),
+                Duration::from_secs(timeout) + self.config.request_timeout,
+            )
+            .param_opt("label", label)
+            .param("revision", &format!("{}", revision))
+            .param("timeout", &format!("{}", timeout))
+            .send()
+            .and_then(|r| Ok(Some(r)))
+            .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
         )
+    }
+
+    pub fn watch_app_nodes(
+        &self,
+        app: &str,
+        label: Option<&str>,
+        timeout: u64,
+    ) -> (WatchHandle, mpsc::UnboundedReceiver<AppNodes>) {
+        WatchTask::spawn(self, app, label, timeout)
     }
 
     pub fn watch_service_once(
@@ -489,4 +503,25 @@ pub struct AppNode {
 pub struct AppNodes {
     pub nodes: HashMap<String, String>,
     pub revision: u64,
+}
+
+pub struct WatchHandle {
+    tx: Option<oneshot::Sender<()>>,
+}
+
+impl Drop for WatchHandle {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl WatchHandle {
+    pub(crate) fn pair() -> (oneshot::Receiver<()>, WatchHandle) {
+        let (tx, rx) = oneshot::channel();
+        (rx, WatchHandle { tx: Some(tx) })
+    }
+
+    fn close(&mut self) {
+        drop(self.tx.take());
+    }
 }

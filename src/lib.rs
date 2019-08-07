@@ -25,6 +25,7 @@ mod https;
 #[macro_use]
 mod request;
 mod addr_serde;
+mod app_watcher;
 pub mod client;
 mod service_keeper;
 

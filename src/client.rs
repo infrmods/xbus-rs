@@ -273,6 +273,36 @@ impl Client {
             .get_ok()
     }
 
+    pub fn query_app_nodes(
+        &self,
+        name: &str,
+        label: Option<&str>,
+    ) -> Box<Future<Item = Option<AppNodes>, Error = Error> + Send> {
+        Box::new(
+            self.request(Method::GET, &format!("/api/apps/{}/nodes", name))
+                .param_opt("label", label)
+                .send(),
+        )
+    }
+
+    pub fn watch_app_nodes_once(
+        &self,
+        name: &str,
+        label: Option<&str>,
+        revision: u64,
+        timeout: u64,
+    ) -> Box<Future<Item = Option<AppNodes>, Error = Error> + Send> {
+        Box::new(
+            self.request(Method::GET, &format!("/api/apps/{}/nodes", name))
+                .param_opt("label", label)
+                .param("revision", &format!("{}", revision))
+                .param("timeout", &format!("{}", timeout))
+                .send()
+                .and_then(|r| Ok(Some(r)))
+                .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
+        )
+    }
+
     pub fn watch_service_once(
         &self,
         service: &str,
@@ -448,9 +478,15 @@ impl Item {
     }
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppNode {
     pub address: String,
     pub label: Option<String>,
     pub config: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct AppNodes {
+    pub nodes: HashMap<String, String>,
+    pub revision: u64,
 }

@@ -1,9 +1,10 @@
 use super::addr_serde;
-use super::app_watcher::WatchTask;
+
 use super::error::Error;
-use futures::future::{loop_fn, Loop};
+
+use super::watcher::{WatchHandle, WatchTask};
 use futures::prelude::*;
-use futures::sync::{mpsc, oneshot};
+use futures::sync::mpsc;
 use https::{ClientConfigPemExt, HttpsConnector};
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
@@ -14,9 +15,7 @@ use serde_yaml;
 use service_keeper::ServiceKeeper;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
-use tokio::spawn;
-use tokio::timer::Delay;
+use std::time::Duration;
 
 const DEFAULT_THREADS: usize = 4;
 const DEFAULT_REQUEST_TIMEOUT: u64 = 5;
@@ -278,7 +277,7 @@ impl Client {
         &self,
         name: &str,
         label: Option<&str>,
-    ) -> Box<Future<Item = Option<AppNodes>, Error = Error> + Send> {
+    ) -> Box<Future<Item = AppNodes, Error = Error> + Send> {
         Box::new(
             self.request(Method::GET, &format!("/api/apps/{}/nodes", name))
                 .param_opt("label", label)
@@ -314,7 +313,20 @@ impl Client {
         label: Option<&str>,
         timeout: u64,
     ) -> (WatchHandle, mpsc::UnboundedReceiver<AppNodes>) {
-        WatchTask::spawn(self, app, label, timeout)
+        let client = self.clone();
+        let o_app = app.to_string();
+        let o_label = label.map(|s| s.to_string());
+        WatchTask::spawn(
+            || Box::new(self.query_app_nodes(app, label).map(Some)),
+            move |revision| {
+                client.watch_app_nodes_once(
+                    &o_app,
+                    o_label.as_ref().map(|s| s.as_str()),
+                    revision,
+                    timeout,
+                )
+            },
+        )
     }
 
     pub fn is_app_node_online(
@@ -367,40 +379,16 @@ impl Client {
         service: &str,
         revision: Option<u64>,
         timeout: u64,
-    ) -> mpsc::UnboundedReceiver<ServiceResult> {
+    ) -> (WatchHandle, mpsc::UnboundedReceiver<ServiceResult>) {
+        let init = || match revision {
+            Some(rev) => self.watch_service_once(service, rev, timeout),
+            None => Box::new(self.get_service(service).map(Some)),
+        };
+        let client = self.clone();
         let service = service.to_string();
-        let (tx, rx) = mpsc::unbounded();
-        spawn(loop_fn(
-            (self.clone(), revision),
-            move |(client, revision)| {
-                let service = service.clone();
-                let tx = tx.clone();
-                match revision {
-                    Some(rev) => client.watch_service_once(&service, rev, timeout),
-                    None => Box::new(client.get_service(&service).map(Some)),
-                }
-                .or_else(move |e| {
-                    error!("watch service({}) error: {}", &service, e);
-                    Delay::new(Instant::now() + Duration::from_secs(5))
-                        .map(|_| None)
-                        .or_else(|e| {
-                            error!("poll watch err timeout fail: {}", e);
-                            Ok(None)
-                        })
-                })
-                .and_then(move |result| match result {
-                    Some(service_result) => {
-                        let revision = service_result.revision + 1;
-                        if tx.unbounded_send(service_result).is_err() {
-                            return Ok(Loop::Break(()));
-                        }
-                        Ok(Loop::Continue((client, Some(revision))))
-                    }
-                    None => Ok(Loop::Continue((client, revision))),
-                })
-            },
-        ));
-        rx
+        WatchTask::spawn(init, move |revision| {
+            client.watch_service_once(&service, revision, timeout)
+        })
     }
 
     pub fn service_keeper(
@@ -517,23 +505,18 @@ pub struct AppNodes {
     pub revision: u64,
 }
 
-pub struct WatchHandle {
-    tx: Option<oneshot::Sender<()>>,
+pub(crate) trait RevisionResult {
+    fn get_revision(&self) -> u64;
 }
 
-impl Drop for WatchHandle {
-    fn drop(&mut self) {
-        self.close();
+impl RevisionResult for ServiceResult {
+    fn get_revision(&self) -> u64 {
+        self.revision
     }
 }
 
-impl WatchHandle {
-    pub(crate) fn pair() -> (oneshot::Receiver<()>, WatchHandle) {
-        let (tx, rx) = oneshot::channel();
-        (rx, WatchHandle { tx: Some(tx) })
-    }
-
-    fn close(&mut self) {
-        drop(self.tx.take());
+impl RevisionResult for AppNodes {
+    fn get_revision(&self) -> u64 {
+        self.revision
     }
 }

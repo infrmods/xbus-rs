@@ -1,4 +1,4 @@
-use super::client::{AppNodes, Client, WatchHandle};
+use super::client::RevisionResult;
 use super::error::Error;
 use futures::prelude::*;
 use futures::sync::{mpsc, oneshot};
@@ -8,36 +8,53 @@ use tokio::timer::Delay;
 
 const WATCH_DELAY: u64 = 5;
 
-pub struct WatchTask {
-    app: String,
-    label: Option<String>,
-    timeout: u64,
-    close_rx: oneshot::Receiver<()>,
-    tx: mpsc::UnboundedSender<AppNodes>,
-
-    client: Client,
-    last_revision: u64,
-    watch_future: Box<Future<Item = Option<AppNodes>, Error = Error> + Send>,
+pub struct WatchHandle {
+    tx: Option<oneshot::Sender<()>>,
 }
 
-impl WatchTask {
-    pub fn spawn(
-        client: &Client,
-        app: &str,
-        label: Option<&str>,
-        timeout: u64,
-    ) -> (WatchHandle, mpsc::UnboundedReceiver<AppNodes>) {
+impl Drop for WatchHandle {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl WatchHandle {
+    pub(crate) fn pair() -> (oneshot::Receiver<()>, WatchHandle) {
+        let (tx, rx) = oneshot::channel();
+        (rx, WatchHandle { tx: Some(tx) })
+    }
+
+    fn close(&mut self) {
+        drop(self.tx.take());
+    }
+}
+
+pub(crate) struct WatchTask<T, WF> {
+    close_rx: oneshot::Receiver<()>,
+    tx: mpsc::UnboundedSender<T>,
+
+    last_revision: u64,
+    watch: WF,
+    watch_future: Box<Future<Item = Option<T>, Error = Error> + Send>,
+}
+
+impl<T, WF> WatchTask<T, WF>
+where
+    T: RevisionResult + Send + 'static,
+    WF: Fn(u64) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
+{
+    pub fn spawn<GF>(init: GF, watch: WF) -> (WatchHandle, mpsc::UnboundedReceiver<T>)
+    where
+        GF: FnOnce() -> Box<Future<Item = Option<T>, Error = Error> + Send>,
+    {
         let (tx, rx) = mpsc::unbounded();
         let (close_rx, handle) = WatchHandle::pair();
         spawn(WatchTask {
-            app: app.to_string(),
-            label: label.map(|s| s.to_string()),
-            timeout,
             close_rx,
             tx,
-            client: client.clone(),
             last_revision: 0,
-            watch_future: client.query_app_nodes(app, label),
+            watch,
+            watch_future: init(),
         });
         (handle, rx)
     }
@@ -50,17 +67,16 @@ impl WatchTask {
                     .map_err(|e| Error::Other(format!("watch app sleep fail: {}", e))),
             );
         } else {
-            self.watch_future = self.client.watch_app_nodes_once(
-                &self.app,
-                self.label.as_ref().map(|s| s.as_str()),
-                self.last_revision,
-                self.timeout,
-            );
+            self.watch_future = (self.watch)(self.last_revision);
         }
     }
 }
 
-impl Future for WatchTask {
+impl<T, WF> Future for WatchTask<T, WF>
+where
+    T: RevisionResult + Send + 'static,
+    WF: Fn(u64) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
+{
     type Item = ();
     type Error = ();
 
@@ -74,7 +90,7 @@ impl Future for WatchTask {
         match self.watch_future.poll() {
             Ok(Async::NotReady) => {}
             Ok(Async::Ready(Some(result))) => {
-                self.last_revision = result.revision;
+                self.last_revision = result.get_revision();
                 if self.tx.unbounded_send(result).is_err() {
                     return Ok(Async::Ready(()));
                 }

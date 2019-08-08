@@ -25,13 +25,14 @@ mod https;
 #[macro_use]
 mod request;
 mod addr_serde;
-mod app_watcher;
 pub mod client;
 mod service_keeper;
+mod watcher;
 
 pub use self::client::Client;
 pub use self::client::Config;
 pub use self::error::Error;
 pub use self::service_keeper::ServiceKeeper;
+pub use self::watcher::WatchHandle;
 
 pub const DEFAULT_ZONE: &str = "default";

@@ -356,7 +356,7 @@ impl KeepTask {
             let fut = match &self.app_node {
                 Some(node) => self.client.revoke_lease_with_node(
                     lease_id,
-                    &node.address,
+                    &node.key,
                     node.label.as_ref().map(|s| s.as_str()),
                 ),
                 None => self.client.revoke_lease(lease_id),

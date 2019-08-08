@@ -265,11 +265,11 @@ impl Client {
     pub fn revoke_lease_with_node(
         &self,
         lease_id: i64,
-        address: &str,
+        key: &str,
         label: Option<&str>,
     ) -> Box<Future<Item = (), Error = Error> + Send> {
         self.request(Method::DELETE, &format!("/api/leases/{}", lease_id))
-            .param("rm_node_address", address)
+            .param("rm_node_key", key)
             .param_opt("app_node_label", label)
             .get_ok()
     }
@@ -315,6 +315,18 @@ impl Client {
         timeout: u64,
     ) -> (WatchHandle, mpsc::UnboundedReceiver<AppNodes>) {
         WatchTask::spawn(self, app, label, timeout)
+    }
+
+    pub fn is_app_node_online(
+        &self,
+        app: &str,
+        label: Option<&str>,
+        key: &str,
+    ) -> Box<Future<Item = bool, Error = Error> + Send> {
+        self.request(Method::GET, &format!("/api/apps/{}/online", app))
+            .param_opt("label", label)
+            .param("key", key)
+            .send()
     }
 
     pub fn watch_service_once(
@@ -494,8 +506,8 @@ impl Item {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppNode {
-    pub address: String,
     pub label: Option<String>,
+    pub key: String,
     pub config: String,
 }
 

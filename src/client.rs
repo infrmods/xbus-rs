@@ -3,6 +3,7 @@ use super::addr_serde;
 use super::error::Error;
 
 use super::watcher::{WatchHandle, WatchTask};
+
 use futures::prelude::*;
 use futures::sync::mpsc;
 use https::{ClientConfigPemExt, HttpsConnector};
@@ -273,7 +274,7 @@ impl Client {
             .get_ok()
     }
 
-    pub fn query_app_nodes(
+    pub fn get_app_nodes(
         &self,
         name: &str,
         label: Option<&str>,
@@ -290,17 +291,17 @@ impl Client {
         app: &str,
         label: Option<&str>,
         revision: u64,
-        timeout: u64,
+        timeout: Duration,
     ) -> Box<Future<Item = Option<AppNodes>, Error = Error> + Send> {
         Box::new(
             self.request_timeout(
                 Method::GET,
                 &format!("/api/apps/{}/nodes", app),
-                Duration::from_secs(timeout) + self.config.request_timeout,
+                timeout + self.config.request_timeout,
             )
             .param_opt("label", label)
             .param("revision", &format!("{}", revision))
-            .param("timeout", &format!("{}", timeout))
+            .param("timeout", &format!("{}", timeout.as_secs()))
             .send()
             .and_then(|r| Ok(Some(r)))
             .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
@@ -311,22 +312,18 @@ impl Client {
         &self,
         app: &str,
         label: Option<&str>,
-        timeout: u64,
+        timeout: Duration,
     ) -> (WatchHandle, mpsc::UnboundedReceiver<AppNodes>) {
         let client = self.clone();
-        let o_app = app.to_string();
-        let o_label = label.map(|s| s.to_string());
-        WatchTask::spawn(
-            || Box::new(self.query_app_nodes(app, label).map(Some)),
-            move |revision| {
-                client.watch_app_nodes_once(
-                    &o_app,
-                    o_label.as_ref().map(|s| s.as_str()),
-                    revision,
-                    timeout,
-                )
-            },
-        )
+        let app = app.to_string();
+        let label = label.map(|s| s.to_string());
+        WatchTask::spawn(None, move |revision| {
+            let label = label.as_ref().map(|s| s.as_str());
+            match revision {
+                Some(revision) => client.watch_app_nodes_once(&app, label, revision, timeout),
+                None => Box::new(client.get_app_nodes(&app, label).map(Some)),
+            }
+        })
     }
 
     pub fn is_app_node_online(
@@ -345,17 +342,17 @@ impl Client {
         &self,
         service: &str,
         revision: u64,
-        timeout: u64,
+        timeout: Duration,
     ) -> Box<Future<Item = Option<ServiceResult>, Error = Error> + Send> {
         Box::new(
             self.request_timeout(
                 Method::GET,
                 &format!("/api/v1/services/{}", service),
-                Duration::from_secs(timeout) + self.config.request_timeout,
+                timeout + self.config.request_timeout,
             )
             .param("watch", "true")
             .param("revision", &format!("{}", revision))
-            .param("timeout", &format!("{}", timeout))
+            .param("timeout", &format!("{}", timeout.as_secs()))
             .send()
             .and_then(|r| Ok(Some(r)))
             .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
@@ -378,16 +375,13 @@ impl Client {
         &self,
         service: &str,
         revision: Option<u64>,
-        timeout: u64,
+        timeout: Duration,
     ) -> (WatchHandle, mpsc::UnboundedReceiver<ServiceResult>) {
-        let init = || match revision {
-            Some(rev) => self.watch_service_once(service, rev, timeout),
-            None => Box::new(self.get_service(service).map(Some)),
-        };
         let client = self.clone();
         let service = service.to_string();
-        WatchTask::spawn(init, move |revision| {
-            client.watch_service_once(&service, revision, timeout)
+        WatchTask::spawn(revision, move |revision| match revision {
+            Some(revision) => client.watch_service_once(&service, revision, timeout),
+            None => Box::new(client.get_service(&service).map(Some)),
         })
     }
 

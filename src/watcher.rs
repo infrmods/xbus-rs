@@ -33,7 +33,7 @@ pub(crate) struct WatchTask<T, WF> {
     close_rx: oneshot::Receiver<()>,
     tx: mpsc::UnboundedSender<T>,
 
-    last_revision: u64,
+    last_revision: Option<u64>,
     watch: WF,
     watch_future: Box<Future<Item = Option<T>, Error = Error> + Send>,
 }
@@ -41,20 +41,18 @@ pub(crate) struct WatchTask<T, WF> {
 impl<T, WF> WatchTask<T, WF>
 where
     T: RevisionResult + Send + 'static,
-    WF: Fn(u64) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
+    WF: Fn(Option<u64>) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
 {
-    pub fn spawn<GF>(init: GF, watch: WF) -> (WatchHandle, mpsc::UnboundedReceiver<T>)
-    where
-        GF: FnOnce() -> Box<Future<Item = Option<T>, Error = Error> + Send>,
-    {
+    pub fn spawn(revision: Option<u64>, watch: WF) -> (WatchHandle, mpsc::UnboundedReceiver<T>) {
         let (tx, rx) = mpsc::unbounded();
         let (close_rx, handle) = WatchHandle::pair();
+        let watch_future = watch(revision.clone());
         spawn(WatchTask {
             close_rx,
             tx,
-            last_revision: 0,
+            last_revision: revision,
             watch,
-            watch_future: init(),
+            watch_future,
         });
         (handle, rx)
     }
@@ -67,7 +65,7 @@ where
                     .map_err(|e| Error::Other(format!("watch app sleep fail: {}", e))),
             );
         } else {
-            self.watch_future = (self.watch)(self.last_revision);
+            self.watch_future = (self.watch)(self.last_revision.clone());
         }
     }
 }
@@ -75,7 +73,7 @@ where
 impl<T, WF> Future for WatchTask<T, WF>
 where
     T: RevisionResult + Send + 'static,
-    WF: Fn(u64) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
+    WF: Fn(Option<u64>) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
 {
     type Item = ();
     type Error = ();
@@ -90,7 +88,7 @@ where
         match self.watch_future.poll() {
             Ok(Async::NotReady) => {}
             Ok(Async::Ready(Some(result))) => {
-                self.last_revision = result.get_revision();
+                self.last_revision = Some(result.get_revision());
                 if self.tx.unbounded_send(result).is_err() {
                     return Ok(Async::Ready(()));
                 }

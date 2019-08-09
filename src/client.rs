@@ -2,10 +2,9 @@ use super::addr_serde;
 
 use super::error::Error;
 
-use super::watcher::{WatchHandle, WatchTask};
+use super::watcher::{WatchStream, WatchTask};
 
 use futures::prelude::*;
-use futures::sync::mpsc;
 use https::{ClientConfigPemExt, HttpsConnector};
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
@@ -313,7 +312,7 @@ impl Client {
         app: &str,
         label: Option<&str>,
         timeout: Duration,
-    ) -> (WatchHandle, mpsc::UnboundedReceiver<AppNodes>) {
+    ) -> WatchStream<AppNodes> {
         let client = self.clone();
         let app = app.to_string();
         let label = label.map(|s| s.to_string());
@@ -376,7 +375,7 @@ impl Client {
         service: &str,
         revision: Option<u64>,
         timeout: Duration,
-    ) -> (WatchHandle, mpsc::UnboundedReceiver<ServiceResult>) {
+    ) -> WatchStream<ServiceResult> {
         let client = self.clone();
         let service = service.to_string();
         WatchTask::spawn(revision, move |revision| match revision {

@@ -43,7 +43,7 @@ where
     T: RevisionResult + Send + 'static,
     WF: Fn(Option<u64>) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
 {
-    pub fn spawn(revision: Option<u64>, watch: WF) -> (WatchHandle, mpsc::UnboundedReceiver<T>) {
+    pub fn spawn(revision: Option<u64>, watch: WF) -> WatchStream<T> {
         let (tx, rx) = mpsc::unbounded();
         let (close_rx, handle) = WatchHandle::pair();
         let watch_future = watch(revision.clone());
@@ -54,7 +54,7 @@ where
             watch,
             watch_future,
         });
-        (handle, rx)
+        WatchStream::new(handle, rx)
     }
 
     fn watch_once(&mut self, delay: bool) {
@@ -103,5 +103,29 @@ where
             }
         }
         Ok(Async::NotReady)
+    }
+}
+
+pub struct WatchStream<T> {
+    handle: WatchHandle,
+    rx: mpsc::UnboundedReceiver<T>,
+}
+
+impl<T> WatchStream<T> {
+    fn new(handle: WatchHandle, rx: mpsc::UnboundedReceiver<T>) -> Self {
+        WatchStream { handle, rx }
+    }
+
+    pub fn split(self) -> (WatchHandle, mpsc::UnboundedReceiver<T>) {
+        (self.handle, self.rx)
+    }
+}
+
+impl<T> Stream for WatchStream<T> {
+    type Item = T;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.rx.poll()
     }
 }

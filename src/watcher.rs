@@ -46,7 +46,7 @@ where
     pub fn spawn(revision: Option<u64>, watch: WF) -> WatchStream<T> {
         let (tx, rx) = mpsc::unbounded();
         let (close_rx, handle) = WatchHandle::pair();
-        let watch_future = watch(revision.clone());
+        let watch_future = watch(revision);
         spawn(WatchTask {
             close_rx,
             tx,
@@ -65,7 +65,7 @@ where
                     .map_err(|e| Error::Other(format!("watch app sleep fail: {}", e))),
             );
         } else {
-            self.watch_future = (self.watch)(self.last_revision.clone());
+            self.watch_future = (self.watch)(self.last_revision);
         }
     }
 }

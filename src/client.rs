@@ -109,8 +109,8 @@ impl Client {
         })
     }
 
-    pub fn get_app_name(&self) -> Option<&String> {
-        self.app_name.as_ref()
+    pub fn get_app_name(&self) -> Option<&str> {
+        self.app_name.as_ref().map(|s| s.as_str())
     }
 
     fn request<'a>(

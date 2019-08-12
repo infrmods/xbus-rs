@@ -79,27 +79,31 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.close_rx.poll() {
-            Ok(Async::NotReady) => {}
-            Ok(Async::Ready(_)) | Err(_) => {
-                return Ok(Async::Ready(()));
-            }
-        }
-        match self.watch_future.poll() {
-            Ok(Async::NotReady) => {}
-            Ok(Async::Ready(Some(result))) => {
-                self.last_revision = Some(result.get_revision());
-                if self.tx.unbounded_send(result).is_err() {
+        loop {
+            match self.close_rx.poll() {
+                Ok(Async::NotReady) => {}
+                Ok(Async::Ready(_)) | Err(_) => {
                     return Ok(Async::Ready(()));
                 }
-                self.watch_once(false);
             }
-            Ok(Async::Ready(None)) => {
-                self.watch_once(false);
-            }
-            Err(e) => {
-                error!("watch fail: {}", e);
-                self.watch_once(true);
+            match self.watch_future.poll() {
+                Ok(Async::NotReady) => {
+                    break;
+                }
+                Ok(Async::Ready(Some(result))) => {
+                    self.last_revision = Some(result.get_revision());
+                    if self.tx.unbounded_send(result).is_err() {
+                        return Ok(Async::Ready(()));
+                    }
+                    self.watch_once(false);
+                }
+                Ok(Async::Ready(None)) => {
+                    self.watch_once(false);
+                }
+                Err(e) => {
+                    error!("watch fail: {}", e);
+                    self.watch_once(true);
+                }
             }
         }
         Ok(Async::NotReady)

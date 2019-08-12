@@ -62,7 +62,7 @@ where
             self.watch_future = Box::new(
                 Delay::new(Instant::now() + Duration::from_secs(WATCH_DELAY))
                     .map(|_| None)
-                    .map_err(|e| Error::Other(format!("watch app sleep fail: {}", e))),
+                    .map_err(|e| Error::Other(format!("watcher sleep fail: {}", e))),
             );
         } else {
             self.watch_future = (self.watch)(self.last_revision);
@@ -98,7 +98,7 @@ where
                 self.watch_once(false);
             }
             Err(e) => {
-                error!("watch app nodes fail: {}", e);
+                error!("watch fail: {}", e);
                 self.watch_once(true);
             }
         }

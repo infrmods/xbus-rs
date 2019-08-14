@@ -450,13 +450,16 @@ impl KeepTask {
             if let Some(r) = self.lease_keep_future.as_mut().map(|f| f.poll()) {
                 match r {
                     Ok(Async::Ready(_)) => {
-                        self.lease_keep_future = None;
                         self.keep_lease();
                         ct = true;
                     }
                     Err(e) => {
                         error!("keep lease fail: {}", e);
-                        self.new_lease(false);
+                        if e.is_timeout() {
+                            self.keep_lease();
+                        } else {
+                            self.new_lease(false);
+                        }
                         ct = true;
                     }
                     Ok(Async::NotReady) => {}

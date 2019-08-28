@@ -1,4 +1,3 @@
-use ring::der::read_tag_and_get_value;
 use untrusted::{Input, Reader};
 use webpki::trust_anchor_util::cert_der_as_trust_anchor;
 
@@ -12,7 +11,7 @@ enum Tag {
 }
 
 fn get_value<'a>(reader: &mut Reader<'a>, tag: Tag) -> Option<Input<'a>> {
-    let (t, input) = read_tag_and_get_value(reader).ok()?;
+    let (t, input) = ring::io::der::read_tag_and_get_value(reader).ok()?;
     if t == tag as u8 {
         Some(input)
     } else {
@@ -23,7 +22,7 @@ fn get_value<'a>(reader: &mut Reader<'a>, tag: Tag) -> Option<Input<'a>> {
 const OBID_CN: [u8; 3] = [85, 4, 3];
 
 pub fn get_cert_cn(cert_der: &[u8]) -> Option<String> {
-    let anchor = cert_der_as_trust_anchor(Input::from(cert_der)).ok()?;
+    let anchor = cert_der_as_trust_anchor(cert_der).ok()?;
     let mut reader = Reader::new(Input::from(anchor.subject));
     while !reader.at_end() {
         let mut set = Reader::new(get_value(&mut reader, Tag::Set)?);

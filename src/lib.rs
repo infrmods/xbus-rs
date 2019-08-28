@@ -1,3 +1,4 @@
+#[macro_use]
 extern crate futures;
 extern crate http;
 extern crate hyper;

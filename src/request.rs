@@ -1,11 +1,12 @@
-use error::Error;
+use crate::error::Error;
 use futures::prelude::*;
+use std::pin::Pin;
 
 use http::request::Builder;
 use http::{Method, Uri};
 use hyper::client::connect::Connect;
 use hyper::client::Client;
-use hyper::{Body, Chunk};
+use hyper::Body;
 use percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_string};
@@ -22,6 +23,7 @@ pub struct RequestBuilder<'a, C: 'static + Connect> {
     body: Option<Body>,
     builder: Builder,
     timeout: Option<Duration>,
+    pending_err: Option<Error>,
 }
 
 impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
@@ -42,6 +44,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
             body: None,
             builder,
             timeout,
+            pending_err: None,
         }
     }
 
@@ -73,10 +76,26 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         self.body(form)
     }
 
-    fn get_response<T>(mut self) -> Box<Future<Item = Response<T>, Error = Error> + Send>
+    pub fn form_result(mut self, form: Result<Form, Error>) -> RequestBuilder<'a, C> {
+        match form {
+            Ok(form) => self.form(form),
+            Err(e) => {
+                if self.pending_err.is_none() {
+                    self.pending_err = Some(e);
+                }
+                self
+            }
+        }
+    }
+
+    fn get_response<T>(mut self) -> Pin<Box<dyn Future<Output = Result<Response<T>, Error>> + Send>>
     where
         for<'de> T: Deserialize<'de> + Send + 'static,
     {
+        if let Some(err) = self.pending_err {
+            return future::err(err).boxed();
+        }
+
         let mut url_str = self.endpoint.to_owned();
         url_str.push_str(self.path);
         if !self.params.is_empty() {
@@ -95,60 +114,67 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         let uri = match url_str.parse::<Uri>() {
             Ok(u) => u,
             Err(_) => {
-                return Box::new(
-                    Err(Error::Other(format!("invalid url: {}", url_str))).into_future(),
-                );
+                return future::err(Error::Other(format!("invalid url: {}", url_str))).boxed();
             }
         };
         self.builder.uri(uri);
         let request = match self.builder.body(self.body.unwrap_or_else(Body::empty)) {
             Ok(r) => r,
             Err(e) => {
-                return Box::new(Err(Error::from(e)).into_future());
+                return future::err(Error::from(e)).boxed();
             }
         };
-        let resp = self
+        let resp_fut = self
             .client
             .request(request)
             .map_err(Error::from)
             .and_then(|resp| {
                 let status = resp.status();
-                join_chunks(resp.into_body().map_err(Error::from)).and_then(move |body| {
-                    if !status.is_success() {
-                        let msg = format!("[{}]: {}", status, String::from_utf8_lossy(&body));
-                        return Err(Error::from(msg));
-                    }
-                    let json_rep: Response<T> = from_slice(&body)?;
-                    Ok(json_rep)
-                })
+                resp.into_body()
+                    .try_concat()
+                    .map_err(Error::from)
+                    .map(move |result| match result {
+                        Ok(body) => {
+                            if !status.is_success() {
+                                let msg =
+                                    format!("[{}]: {}", status, String::from_utf8_lossy(&body));
+                                return Err(Error::from(msg));
+                            }
+                            let json_rep: Response<T> = from_slice(&body)?;
+                            Ok(json_rep)
+                        }
+                        Err(e) => Err(Error::from(e)),
+                    })
             });
         if let Some(timeout) = self.timeout {
-            return Box::new(Timeout::new(resp, timeout).map_err(|e| {
-                if e.is_inner() {
-                    e.into_inner().unwrap()
-                } else {
-                    Error::io_timeout()
-                }
-            }));
+            return Timeout::new(resp_fut, timeout)
+                .map(|result| match result {
+                    Ok(x) => x,
+                    Err(_) => Err(Error::io_timeout()),
+                })
+                .boxed();
         }
-        Box::new(resp)
+        resp_fut.boxed()
     }
 
-    pub fn send<T>(self) -> Box<Future<Item = T, Error = Error> + Send>
+    pub fn send<T>(self) -> impl Future<Output = Result<T, Error>>
     where
         for<'de> T: Deserialize<'de> + Send + 'static,
     {
-        Box::new(self.get_response().and_then(|resp| resp.get()))
+        self.get_response()
+            .map(|result| result.and_then(|resp| resp.get()))
     }
 
-    pub fn get_ok(self) -> Box<Future<Item = (), Error = Error> + Send> {
-        Box::new(self.get_response::<()>().and_then(|resp| resp.get_ok()))
+    pub fn get_ok(self) -> impl Future<Output = Result<(), Error>> {
+        self.get_response::<()>()
+            .map(|result| result.and_then(|resp| resp.get_ok()))
     }
 }
 
-fn join_chunks<S>(s: S) -> Box<Future<Item = Vec<u8>, Error = Error> + Send>
+/*
+fn join_chunks<S>(s: S) -> Box<dyn Future<Output = Result<Vec<u8>, Error>> + Send>
 where
-    S: Stream<Item = Chunk, Error = Error> + Send + 'static,
+    S: Stream<Item = Result<Chunk, Error>> + Send + 'static,
 {
     Box::new(s.collect().map(|cs| {
         let mut r = Vec::new();
@@ -158,6 +184,7 @@ where
         r
     }))
 }
+*/
 
 #[derive(Deserialize, Debug)]
 struct RespError {

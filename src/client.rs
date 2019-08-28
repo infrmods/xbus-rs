@@ -1,18 +1,15 @@
 use super::addr_serde;
-
 use super::error::Error;
-
 use super::watcher::{WatchStream, WatchTask};
-
+use crate::https::{ClientConfigPemExt, HttpsConnector};
+use crate::request::{Form, RequestBuilder};
+use crate::service_keeper::ServiceKeeper;
 use futures::prelude::*;
-use https::{ClientConfigPemExt, HttpsConnector};
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
-use request::{Form, RequestBuilder};
 use serde::Deserialize;
 use serde_json;
 use serde_yaml;
-use service_keeper::ServiceKeeper;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -140,33 +137,23 @@ impl Client {
         builder
     }
 
-    pub fn get(&self, key: &str) -> Box<Future<Item = Item, Error = Error> + Send> {
-        Box::new(
-            self.request(Method::GET, &format!("/api/configs/{}", key))
-                .send()
-                .map(|r: ItemResult| r.config),
-        )
+    pub fn get(&self, key: &str) -> impl Future<Output = Result<Item, Error>> {
+        self.request(Method::GET, &format!("/api/configs/{}", key))
+            .send::<ItemResult>()
+            .map(|result| result.map(|r| r.config))
     }
 
-    pub fn get_all(&self, keys: &[String]) -> Box<Future<Item = Vec<Item>, Error = Error> + Send> {
-        let val = match serde_json::to_string(keys) {
-            Ok(v) => v,
-            Err(e) => {
-                return Box::new(Err(Error::from(e)).into_future());
-            }
-        };
-        Box::new(
-            self.request(Method::GET, "/api/configs")
-                .param("keys", &val)
-                .send()
-                .map(|r: ItemsResult| r.configs),
-        )
+    pub async fn get_all(&self, keys: &[String]) -> Result<Vec<Item>, Error> {
+        let val = serde_json::to_string(keys).map_err(Error::from)?;
+        let result = self
+            .request(Method::GET, "/api/configs")
+            .param("keys", &val)
+            .send::<ItemsResult>()
+            .await?;
+        Ok(result.configs)
     }
 
-    pub fn get_service(
-        &self,
-        service: &str,
-    ) -> Box<Future<Item = ServiceResult, Error = Error> + Send> {
+    pub fn get_service(&self, service: &str) -> impl Future<Output = Result<ServiceResult, Error>> {
         self.request(Method::GET, &format!("/api/v1/services/{}", service))
             .send()
     }
@@ -177,20 +164,14 @@ impl Client {
         endpoint: &ServiceEndpoint,
         ttl: Option<i64>,
         lease_id: Option<i64>,
-    ) -> Box<Future<Item = PlugResult, Error = Error> + Send> {
-        let form = match form!("ttl" => ttl, "lease_id" => lease_id,
-                               "desc" => service, "endpoint" => endpoint)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                return Box::new(Err(e).into_future());
-            }
-        };
+    ) -> impl Future<Output = Result<PlugResult, Error>> {
+        let form = form!("ttl" => ttl, "lease_id" => lease_id,
+                         "desc" => service, "endpoint" => endpoint);
         self.request(
             Method::POST,
             &format!("/api/v1/services/{}", &service.service),
         )
-        .form(form)
+        .form_result(form)
         .send()
     }
 
@@ -200,17 +181,11 @@ impl Client {
         endpoint: &ServiceEndpoint,
         lease_id: Option<i64>,
         ttl: Option<i64>,
-    ) -> Box<Future<Item = PlugResult, Error = Error> + Send> {
-        let form = match form!("ttl" => ttl, "lease_id" => lease_id,
-                               "desces" => services, "endpoint" => endpoint)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                return Box::new(Err(e).into_future());
-            }
-        };
+    ) -> impl Future<Output = Result<PlugResult, Error>> {
+        let form = form!("ttl" => ttl, "lease_id" => lease_id,
+                         "desces" => services, "endpoint" => endpoint);
         self.request(Method::POST, "/api/v1/services")
-            .form(form)
+            .form_result(form)
             .send()
     }
 
@@ -219,7 +194,7 @@ impl Client {
         service: &str,
         zone: &str,
         addr: &str,
-    ) -> Box<Future<Item = (), Error = Error> + Send> {
+    ) -> impl Future<Output = Result<(), Error>> {
         self.request(
             Method::DELETE,
             &format!("/api/v1/service/{}/{}/{}", service, zone, addr),
@@ -231,7 +206,7 @@ impl Client {
         &self,
         ttl: Option<i64>,
         app_node: Option<&AppNode>,
-    ) -> Box<Future<Item = LeaseGrantResult, Error = Error> + Send> {
+    ) -> impl Future<Output = Result<LeaseGrantResult, Error>> {
         let ttl = ttl.map(|n| format!("{}", n));
         let ttl = ttl.as_ref();
         let mut req = self.request(Method::POST, "/api/leases");
@@ -239,24 +214,17 @@ impl Client {
             req = req.param("ttl", ttl);
         }
         if let Some(app_node) = app_node {
-            match form!("app_node" => app_node) {
-                Ok(form) => {
-                    req = req.form(form);
-                }
-                Err(e) => {
-                    return Box::new(Err(e).into_future());
-                }
-            }
+            req = req.form_result(form!("app_node" => app_node));
         }
-        req.send()
+        req.send().boxed()
     }
 
-    pub fn keepalive_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error> + Send> {
+    pub fn keepalive_lease(&self, lease_id: i64) -> impl Future<Output = Result<(), Error>> {
         self.request(Method::POST, &format!("/api/leases/{}", lease_id))
             .get_ok()
     }
 
-    pub fn revoke_lease(&self, lease_id: i64) -> Box<Future<Item = (), Error = Error> + Send> {
+    pub fn revoke_lease(&self, lease_id: i64) -> impl Future<Output = Result<(), Error>> {
         self.request(Method::DELETE, &format!("/api/leases/{}", lease_id))
             .get_ok()
     }
@@ -266,7 +234,7 @@ impl Client {
         lease_id: i64,
         key: &str,
         label: Option<&str>,
-    ) -> Box<Future<Item = (), Error = Error> + Send> {
+    ) -> impl Future<Output = Result<(), Error>> {
         self.request(Method::DELETE, &format!("/api/leases/{}", lease_id))
             .param("rm_node_key", key)
             .param_opt("app_node_label", label)
@@ -277,12 +245,10 @@ impl Client {
         &self,
         name: &str,
         label: Option<&str>,
-    ) -> Box<Future<Item = AppNodes, Error = Error> + Send> {
-        Box::new(
-            self.request(Method::GET, &format!("/api/apps/{}/nodes", name))
-                .param_opt("label", label)
-                .send(),
-        )
+    ) -> impl Future<Output = Result<AppNodes, Error>> {
+        self.request(Method::GET, &format!("/api/apps/{}/nodes", name))
+            .param_opt("label", label)
+            .send()
     }
 
     pub fn watch_app_nodes_once(
@@ -291,20 +257,26 @@ impl Client {
         label: Option<&str>,
         revision: u64,
         timeout: Duration,
-    ) -> Box<Future<Item = Option<AppNodes>, Error = Error> + Send> {
-        Box::new(
-            self.request_timeout(
-                Method::GET,
-                &format!("/api/apps/{}/nodes", app),
-                timeout + self.config.request_timeout,
-            )
-            .param_opt("label", label)
-            .param("revision", &format!("{}", revision))
-            .param("timeout", &format!("{}", timeout.as_secs()))
-            .send()
-            .and_then(|r| Ok(Some(r)))
-            .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
+    ) -> impl Future<Output = Result<Option<AppNodes>, Error>> {
+        self.request_timeout(
+            Method::GET,
+            &format!("/api/apps/{}/nodes", app),
+            timeout + self.config.request_timeout,
         )
+        .param_opt("label", label)
+        .param("revision", &format!("{}", revision))
+        .param("timeout", &format!("{}", timeout.as_secs()))
+        .send()
+        .map(|result| match result {
+            Ok(nodes) => Ok(Some(nodes)),
+            Err(e) => {
+                if e.is_timeout() {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        })
     }
 
     pub fn watch_app_nodes(
@@ -317,10 +289,15 @@ impl Client {
         let app = app.to_string();
         let label = label.map(|s| s.to_string());
         WatchTask::spawn(None, move |revision| {
-            let label = label.as_ref().map(|s| s.as_str());
+            let label: Option<&str> = label.as_ref().map(|s| s.as_str());
             match revision {
-                Some(revision) => client.watch_app_nodes_once(&app, label, revision, timeout),
-                None => Box::new(client.get_app_nodes(&app, label).map(Some)),
+                Some(revision) => client
+                    .watch_app_nodes_once(&app, label, revision, timeout)
+                    .boxed(),
+                None => client
+                    .get_app_nodes(&app, label)
+                    .map(|r| r.map(Some))
+                    .boxed(),
             }
         })
     }
@@ -330,7 +307,7 @@ impl Client {
         app: &str,
         label: Option<&str>,
         key: &str,
-    ) -> Box<Future<Item = bool, Error = Error> + Send> {
+    ) -> impl Future<Output = Result<bool, Error>> {
         self.request(Method::GET, &format!("/api/apps/{}/online", app))
             .param_opt("label", label)
             .param("key", key)
@@ -342,32 +319,36 @@ impl Client {
         service: &str,
         revision: u64,
         timeout: Duration,
-    ) -> Box<Future<Item = Option<ServiceResult>, Error = Error> + Send> {
-        Box::new(
-            self.request_timeout(
-                Method::GET,
-                &format!("/api/v1/services/{}", service),
-                timeout + self.config.request_timeout,
-            )
-            .param("watch", "true")
-            .param("revision", &format!("{}", revision))
-            .param("timeout", &format!("{}", timeout.as_secs()))
-            .send()
-            .and_then(|r| Ok(Some(r)))
-            .or_else(|e| if e.is_timeout() { Ok(None) } else { Err(e) }),
+    ) -> impl Future<Output = Result<Option<ServiceResult>, Error>> {
+        self.request_timeout(
+            Method::GET,
+            &format!("/api/v1/services/{}", service),
+            timeout + self.config.request_timeout,
         )
+        .param("watch", "true")
+        .param("revision", &format!("{}", revision))
+        .param("timeout", &format!("{}", timeout.as_secs()))
+        .send()
+        .map(|result| match result {
+            Ok(r) => Ok(Some(r)),
+            Err(e) => {
+                if e.is_timeout() {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        })
     }
 
     pub fn delete_service(
         &self,
         service: &str,
         zone: Option<&str>,
-    ) -> Box<Future<Item = (), Error = Error> + Send> {
-        Box::new(
-            self.request(Method::DELETE, &format!("/api/v1/services/{}", service))
-                .param("zone", zone.unwrap_or(""))
-                .get_ok(),
-        )
+    ) -> impl Future<Output = Result<(), Error>> {
+        self.request(Method::DELETE, &format!("/api/v1/services/{}", service))
+            .param("zone", zone.unwrap_or(""))
+            .get_ok()
     }
 
     pub fn watch_service(
@@ -379,8 +360,13 @@ impl Client {
         let client = self.clone();
         let service = service.to_string();
         WatchTask::spawn(revision, move |revision| match revision {
-            Some(revision) => client.watch_service_once(&service, revision, timeout),
-            None => Box::new(client.get_service(&service).map(Some)),
+            Some(revision) => client
+                .watch_service_once(&service, revision, timeout)
+                .boxed(),
+            None => client
+                .get_service(&service)
+                .map(|result| result.map(Some))
+                .boxed(),
         })
     }
 

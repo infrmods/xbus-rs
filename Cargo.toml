@@ -12,7 +12,6 @@ serde_yaml = "0.7"
 hyper = {git="https://github.com/hyperium/hyper.git"}
 url = "1.7"
 futures-preview = { version="=0.3.0-alpha.18", features=["compat", "async-await", "nightly"]}
-futures01 = { package = "futures", version = "0.1" }
 tokio = "=0.2.0-alpha.2"
 tokio-io = "=0.2.0-alpha.2"
 log = "0.4"
@@ -30,3 +29,4 @@ features = ["dangerous_configuration"]
 
 [dev-dependencies]
 env_logger = "0.4"
+clap = "2.33"

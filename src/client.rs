@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-const DEFAULT_THREADS: usize = 4;
 const DEFAULT_REQUEST_TIMEOUT: u64 = 5;
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -79,7 +78,7 @@ impl Client {
             None
         };
 
-        let mut http_connector = HttpConnector::new(DEFAULT_THREADS);
+        let mut http_connector = HttpConnector::new();
         http_connector.enforce_http(false);
         let https_connector = HttpsConnector::new(tls_config, http_connector);
         Ok((https_connector, app_name))

@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::spawn;
-use tokio::timer::Delay;
+use tokio::timer::delay;
 
 const WATCH_DELAY: u64 = 5;
 
@@ -62,9 +62,9 @@ where
         WatchStream::new(handle, rx)
     }
 
-    fn watch_once(&mut self, delay: bool) {
-        if delay {
-            self.watch_future = Delay::new(Instant::now() + Duration::from_secs(WATCH_DELAY))
+    fn watch_once(&mut self, to_delay: bool) {
+        if to_delay {
+            self.watch_future = delay(Instant::now() + Duration::from_secs(WATCH_DELAY))
                 .map(|_| Ok(None))
                 .boxed();
         } else {

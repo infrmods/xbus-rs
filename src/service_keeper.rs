@@ -54,28 +54,29 @@ impl ServiceKeeper {
         let _ = self.cmd_tx.unbounded_send(Cmd::UpdateEndpoint(endpoint));
     }
 
-    pub async fn plug(&self, service: &ZoneService) -> Result<(), Error> {
-        self.plug_replaceable(service, false).await
+    pub fn plug(&self, service: &ZoneService) -> impl Future<Output = Result<(), Error>> {
+        self.plug_replaceable(service, false)
     }
 
-    pub async fn plug_replaceable(
+    pub fn plug_replaceable(
         &self,
         service: &ZoneService,
         replaceable: bool,
-    ) -> Result<(), Error> {
+    ) -> impl Future<Output = Result<(), Error>> {
         let (tx, rx) = oneshot::channel();
         if self
             .cmd_tx
             .unbounded_send(Cmd::Plug(service.clone(), tx, replaceable))
             .is_err()
         {
-            return Err(Error::Other("keep task closed".to_string()));
+            return future::err(Error::Other("keep task closed".to_string())).boxed();
         }
-        match rx.await {
+        rx.map(|r| match r {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(Error::Other("keep task closed".to_string())),
-        }
+        })
+        .boxed()
     }
 
     pub fn unplug<S: Into<String>>(&self, service: S, zone: S) {

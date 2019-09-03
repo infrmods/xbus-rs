@@ -291,7 +291,7 @@ impl Client {
             let label: Option<&str> = label.as_ref().map(|s| s.as_str());
             match revision {
                 Some(revision) => client
-                    .watch_app_nodes_once(&app, label, revision, timeout)
+                    .watch_app_nodes_once(&app, label, revision + 1, timeout)
                     .boxed(),
                 None => client
                     .get_app_nodes(&app, label)
@@ -360,7 +360,7 @@ impl Client {
         let service = service.to_string();
         WatchTask::spawn(revision, move |revision| match revision {
             Some(revision) => client
-                .watch_service_once(&service, revision, timeout)
+                .watch_service_once(&service, revision + 1, timeout)
                 .boxed(),
             None => client
                 .get_service(&service)

@@ -124,6 +124,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                 return future::err(Error::from(e)).boxed();
             }
         };
+        trace!("request xbus: {} {}", request.method(), request.uri());
         let resp_fut = self
             .client
             .request(request)
@@ -132,7 +133,6 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                 let status = resp.status();
                 resp.into_body()
                     .try_concat()
-                    .map_err(Error::from)
                     .map(move |result| match result {
                         Ok(body) => {
                             if !status.is_success() {

@@ -27,12 +27,14 @@ mod https;
 mod request;
 mod addr_serde;
 pub mod client;
+mod config;
 mod service_keeper;
 mod watcher;
 
 pub use self::client::Client;
-pub use self::client::Config;
+pub use self::config::Config;
 pub use self::error::Error;
+pub use self::https::TlsClientConfigExt;
 pub use self::service_keeper::ServiceKeeper;
 pub use self::watcher::WatchHandle;
 

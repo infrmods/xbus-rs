@@ -1,7 +1,8 @@
 use super::addr_serde;
 use super::error::Error;
 use super::watcher::{WatchStream, WatchTask};
-use crate::https::{ClientConfigPemExt, HttpsConnector};
+use crate::config::Config;
+use crate::https::{HttpsConnector, TlsClientConfigExt};
 use crate::request::{Form, RequestBuilder};
 use crate::service_keeper::ServiceKeeper;
 use futures::prelude::*;
@@ -13,43 +14,6 @@ use serde_yaml;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
-
-const DEFAULT_REQUEST_TIMEOUT: u64 = 5;
-
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
-pub struct Config {
-    pub endpoint: String,
-    pub insecure: bool,
-    pub dev_app: Option<String>,
-    pub ca_file: Option<String>,
-    pub cert_key_file: Option<(String, String)>,
-    pub max_idle_connections: Option<usize>,
-    pub request_timeout: Duration,
-}
-
-impl Config {
-    pub fn new(endpoint: &str) -> Config {
-        Config {
-            endpoint: endpoint.to_owned(),
-            insecure: false,
-            dev_app: None,
-            ca_file: None,
-            cert_key_file: None,
-            max_idle_connections: None,
-            request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT),
-        }
-    }
-
-    pub fn ca_file(mut self, file: &str) -> Config {
-        self.ca_file = Some(file.to_owned());
-        self
-    }
-
-    pub fn cert_key_file(mut self, cert: &str, key: &str) -> Config {
-        self.cert_key_file = Some((cert.to_owned(), key.to_owned()));
-        self
-    }
-}
 
 #[derive(Clone)]
 pub struct Client {
@@ -68,11 +32,8 @@ impl Client {
         if config.insecure {
             tls_config.set_insecure();
         }
-        if let Some(ref path) = config.ca_file {
-            tls_config.add_root_cert(path)?;
-        }
-
-        let app_name = if let Some((ref cert, ref key)) = config.cert_key_file {
+        config.add_ca(&mut tls_config.root_store)?;
+        let app_name = if let Some((cert, key)) = config.load_cert_key()? {
             Some(tls_config.add_cert_key(cert, key)?)
         } else {
             None

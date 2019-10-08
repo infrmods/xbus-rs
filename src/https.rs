@@ -2,10 +2,7 @@ use crate::cert::get_cert_cn;
 use crate::error::Error;
 use futures::prelude::*;
 use hyper::client::connect::{Connect, Connected, Destination};
-use rustls;
-use rustls::internal::pemfile;
-use rustls::ClientConfig;
-use std::fs::File;
+use rustls::{self, Certificate, ClientConfig, PrivateKey};
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,66 +12,19 @@ use tokio_rustls::TlsConnector;
 use webpki;
 use webpki_roots;
 
-pub trait ClientConfigPemExt {
+pub trait TlsClientConfigExt {
     fn set_insecure(&mut self);
-    fn add_root_cert(&mut self, pem_path: &str) -> Result<(), Error>;
-    fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<String, Error>;
+    fn add_cert_key(&mut self, certs: Vec<Certificate>, key: PrivateKey) -> Result<String, Error>;
 }
 
-impl ClientConfigPemExt for ClientConfig {
+impl TlsClientConfigExt for ClientConfig {
     fn set_insecure(&mut self) {
         warn!("using insecure https client");
         self.dangerous()
             .set_certificate_verifier(Arc::new(DangerServerVerier));
     }
 
-    fn add_root_cert(&mut self, pem_path: &str) -> Result<(), Error> {
-        let mut file =
-            io::BufReader::new(File::open(pem_path).map_err(|e| {
-                Error::Other(format!("open cacert file({}) fail: {}", pem_path, e))
-            })?);
-        if self.root_store.add_pem_file(&mut file).is_err() {
-            Err(Error::Other(format!("add root cert fail: {}", pem_path)))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn add_cert_key(&mut self, cert_path: &str, key_path: &str) -> Result<String, Error> {
-        let certs = {
-            let mut file =
-                io::BufReader::new(File::open(cert_path).map_err(|e| {
-                    Error::Other(format!("open cert file({}) fail: {}", cert_path, e))
-                })?);
-            match pemfile::certs(&mut file) {
-                Ok(certs) => {
-                    if certs.is_empty() {
-                        return Err(Error::Other(format!("empty cert file: {}", cert_path)));
-                    }
-                    certs
-                }
-                Err(_) => {
-                    return Err(Error::Other(format!("invalid cert file: {}", cert_path)));
-                }
-            }
-        };
-        let key = {
-            let mut file =
-                io::BufReader::new(File::open(key_path).map_err(|e| {
-                    Error::Other(format!("open key file({}) fail: {}", key_path, e))
-                })?);
-            match pemfile::rsa_private_keys(&mut file) {
-                Ok(keys) => {
-                    if keys.is_empty() {
-                        return Err(Error::Other(format!("empty key file: {}", key_path)));
-                    }
-                    keys.into_iter().next().unwrap()
-                }
-                Err(_) => {
-                    return Err(Error::Other(format!("invalid key file: {}", key_path)));
-                }
-            }
-        };
+    fn add_cert_key(&mut self, certs: Vec<Certificate>, key: PrivateKey) -> Result<String, Error> {
         let cn =
             get_cert_cn(&certs[0].0).ok_or_else(|| Error::Other("get cert cn fail".to_string()))?;
         self.set_single_client_cert(certs, key);

@@ -30,6 +30,7 @@ impl Client {
     ) -> Result<(HttpsConnector<HttpConnector>, Option<String>), Error> {
         let mut tls_config = ::rustls::ClientConfig::new();
         if config.insecure {
+            warn!("using insecure https client");
             tls_config.set_insecure();
         }
         config.add_ca(&mut tls_config.root_store)?;

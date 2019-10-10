@@ -19,7 +19,6 @@ pub trait TlsClientConfigExt {
 
 impl TlsClientConfigExt for ClientConfig {
     fn set_insecure(&mut self) {
-        warn!("using insecure https client");
         self.dangerous()
             .set_certificate_verifier(Arc::new(DangerServerVerier));
     }

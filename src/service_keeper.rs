@@ -367,7 +367,9 @@ impl KeepTask {
             };
             spawn(fut.map(move |r| {
                 if let Err(e) = r {
-                    error!("revoke lease {} fail: {}", lease_id, e);
+                    if !e.is_not_found() {
+                        error!("revoke lease {} fail: {}", lease_id, e);
+                    }
                 }
                 let _ = tx.send(());
             }));

@@ -7,7 +7,7 @@ use http::{Method, Uri};
 use hyper::client::connect::Connect;
 use hyper::client::Client;
 use hyper::Body;
-use percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_string};
 use std::collections::HashMap;
@@ -105,7 +105,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                     .params
                     .iter()
                     .map(|(k, v)| {
-                        format!("{}={}", k, percent_encode(v.as_bytes(), DEFAULT_ENCODE_SET))
+                        format!("{}={}", k, percent_encode(v.as_bytes(), NON_ALPHANUMERIC))
                     })
                     .collect::<Vec<String>>()
                     .join("&"),

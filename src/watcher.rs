@@ -96,7 +96,10 @@ where
                     break;
                 }
                 Poll::Ready(Ok(Some(result))) => {
-                    self.last_revision = Some(result.get_revision());
+                    let revision = result.get_revision();
+                    if revision > 0 {
+                        self.last_revision = Some(revision);
+                    }
                     if self.tx.unbounded_send(result).is_err() {
                         return Poll::Ready(());
                     }

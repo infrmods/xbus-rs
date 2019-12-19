@@ -316,13 +316,13 @@ impl Client {
         &self,
         service: &str,
         revision: Option<u64>,
-        timeout: Duration,
+        interval: Duration,
     ) -> WatchStream<ServiceResult> {
         let client = self.clone();
         let service = service.to_string();
         WatchTask::spawn(revision, move |revision| match revision {
             Some(revision) => client
-                .watch_service_once(&service, revision + 1, timeout)
+                .watch_service_once(&service, revision + 1, interval)
                 .boxed(),
             None => client
                 .get_service(&service)
@@ -338,6 +338,66 @@ impl Client {
         endpoint: ServiceEndpoint,
     ) -> ServiceKeeper {
         ServiceKeeper::new(&self, ttl, app_node, endpoint)
+    }
+
+    pub fn watch_extension_once(
+        &self,
+        extension: &str,
+        revision: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<Option<ExtensionWatchResult>, Error>> {
+        self.request_timeout(
+            Method::GET,
+            &format!("/api/v1/service-extensions/{}", extension),
+            timeout + self.config.request_timeout,
+        )
+        .param("watch", "true")
+        .param("revision", &format!("{}", revision))
+        .param("timeout", &format!("{}", timeout.as_secs()))
+        .send()
+        .map(|result| match result {
+            Ok(r) => Ok(Some(r)),
+            Err(e) => {
+                if e.is_timeout() {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        })
+    }
+
+    pub fn watch_extension(
+        &self,
+        extension: &str,
+        revision: Option<u64>,
+        interval: Duration,
+    ) -> WatchStream<ExtensionWatchResult> {
+        let client = self.clone();
+        let extension = extension.to_string();
+        WatchTask::spawn(revision, move |revision| {
+            client
+                .watch_extension_once(&extension, revision.unwrap_or(0) + 1, interval)
+                .boxed()
+        })
+    }
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct ExtensionEvent {
+    service: String,
+    zone: String,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct ExtensionWatchResult {
+    events: Vec<ExtensionEvent>,
+    revision: u64,
+}
+
+impl RevisionResult for ExtensionWatchResult {
+    fn get_revision(&self) -> u64 {
+        self.revision
     }
 }
 
@@ -378,6 +438,7 @@ pub struct ZoneService {
     pub zone: String,
     #[serde(rename = "type")]
     pub typ: String,
+    pub extension: Option<String>,
     pub proto: Option<String>,
     pub description: Option<String>,
 

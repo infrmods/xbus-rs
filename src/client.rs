@@ -385,14 +385,14 @@ impl Client {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct ExtensionEvent {
-    service: String,
-    zone: String,
+    pub service: String,
+    pub zone: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct ExtensionWatchResult {
-    events: Vec<ExtensionEvent>,
-    revision: u64,
+    pub events: Vec<ExtensionEvent>,
+    pub revision: u64,
 }
 
 impl RevisionResult for ExtensionWatchResult {

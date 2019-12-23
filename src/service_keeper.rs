@@ -6,9 +6,9 @@ use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::spawn;
-use tokio::timer::delay;
+use tokio::time::delay_for;
 
 const GRANT_RETRY_INTERVAL: u64 = 5;
 
@@ -165,7 +165,7 @@ impl KeepTask {
         if delay_new {
             let (client, ttl) = (self.client.clone(), self.ttl);
             self.lease_future = Some(
-                delay(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
+                delay_for(Duration::from_secs(GRANT_RETRY_INTERVAL))
                     .then(move |_| client.grant_lease(ttl, app_node.as_ref()))
                     .boxed(),
             );
@@ -182,7 +182,7 @@ impl KeepTask {
         if let Some(ref mut lease_result) = self.lease_result {
             let (client, lease_id) = (self.client.clone(), lease_result.lease_id);
             self.lease_keep_future = Some(
-                delay(Instant::now() + Duration::from_secs(lease_result.ttl as u64 / 2))
+                delay_for(Duration::from_secs(lease_result.ttl as u64 / 2))
                     .then(move |_| client.keepalive_lease(lease_id))
                     .boxed(),
             );
@@ -207,7 +207,7 @@ impl KeepTask {
                     lease_result.lease_id,
                 );
                 self.replug_future = Some(
-                    delay(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
+                    delay_for(Duration::from_secs(GRANT_RETRY_INTERVAL))
                         .then(move |_| {
                             client.plug_all_services(&services, &endpoint, Some(lease_id), None)
                         })

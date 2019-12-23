@@ -9,19 +9,19 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 serde_yaml = "0.8"
-hyper = {version="=0.13.0-alpha.4", features=["unstable-stream"]}
+hyper = "0.13"
 url = "1.7"
-futures-preview = { version="=0.3.0-alpha.19", features=["compat", "async-await"]}
-tokio = "=0.2.0-alpha.6"
-tokio-io = "=0.2.0-alpha.6"
+futures = { version="0.3", features=["compat", "async-await"]}
+tokio = {version="0.2", features=["stream", "macros"]}
 log = "0.4"
-http = "0.1"
+http = "*"
 percent-encoding = "2.1"
-tokio-rustls = "=0.12.0-alpha.4"
+tokio-rustls = "0.12"
 webpki = "*"
 webpki-roots = "*"
 ring = "*"
 untrusted = "*"
+bytes = "*"
 
 [dependencies.rustls]
 version = "*"

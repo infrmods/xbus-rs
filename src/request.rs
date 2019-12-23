@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_string};
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::timer::Timeout;
+use tokio::time::timeout;
 use url::form_urlencoded;
 
 pub struct RequestBuilder<'a, C: 'static + Connect> {
@@ -26,7 +26,7 @@ pub struct RequestBuilder<'a, C: 'static + Connect> {
     pending_err: Option<Error>,
 }
 
-impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
+impl<'a, C: Connect + Send + Sync + Clone + 'static> RequestBuilder<'a, C> {
     pub fn new(
         client: &'a Client<C>,
         endpoint: &'a str,
@@ -35,7 +35,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
         timeout: Option<Duration>,
     ) -> RequestBuilder<'a, C> {
         let mut builder = Builder::new();
-        builder.method(method);
+        builder = builder.method(method);
         RequestBuilder {
             client,
             endpoint,
@@ -61,7 +61,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
     }
 
     pub fn header(mut self, name: &'a str, value: &'a str) -> RequestBuilder<'a, C> {
-        self.builder.header(name, value);
+        self.builder = self.builder.header(name, value);
         self
     }
 
@@ -71,7 +71,8 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
     }
 
     pub fn form(mut self, form: Form) -> RequestBuilder<'a, C> {
-        self.builder
+        self.builder = self
+            .builder
             .header("Content-Type", "application/x-www-form-urlencoded");
         self.body(form)
     }
@@ -117,7 +118,7 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
                 return future::err(Error::Other(format!("invalid url: {}", url_str))).boxed();
             }
         };
-        self.builder.uri(uri);
+        self.builder = self.builder.uri(uri);
         let request = match self.builder.body(self.body.unwrap_or_else(Body::empty)) {
             Ok(r) => r,
             Err(e) => {
@@ -131,23 +132,20 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
             .map_err(Error::from)
             .and_then(|resp| {
                 let status = resp.status();
-                resp.into_body()
-                    .try_concat()
-                    .map(move |result| match result {
-                        Ok(body) => {
-                            if !status.is_success() {
-                                let msg =
-                                    format!("[{}]: {}", status, String::from_utf8_lossy(&body));
-                                return Err(Error::from(msg));
-                            }
-                            let json_rep: Response<T> = from_slice(&body)?;
-                            Ok(json_rep)
+                hyper::body::to_bytes(resp).map(move |result| match result {
+                    Ok(body) => {
+                        if !status.is_success() {
+                            let msg = format!("[{}]: {}", status, String::from_utf8_lossy(&body));
+                            return Err(Error::from(msg));
                         }
-                        Err(e) => Err(Error::from(e)),
-                    })
+                        let json_rep: Response<T> = from_slice(&body)?;
+                        Ok(json_rep)
+                    }
+                    Err(e) => Err(Error::from(e)),
+                })
             });
-        if let Some(timeout) = self.timeout {
-            return Timeout::new(resp_fut, timeout)
+        if let Some(to) = self.timeout {
+            return timeout(to, resp_fut)
                 .map(|result| match result {
                     Ok(x) => x,
                     Err(_) => Err(Error::io_timeout()),
@@ -170,21 +168,6 @@ impl<'a, C: 'static + Connect> RequestBuilder<'a, C> {
             .map(|result| result.and_then(|resp| resp.get_ok()))
     }
 }
-
-/*
-fn join_chunks<S>(s: S) -> Box<dyn Future<Output = Result<Vec<u8>, Error>> + Send>
-where
-    S: Stream<Item = Result<Chunk, Error>> + Send + 'static,
-{
-    Box::new(s.collect().map(|cs| {
-        let mut r = Vec::new();
-        for c in cs {
-            r.extend(c);
-        }
-        r
-    }))
-}
-*/
 
 #[derive(Deserialize, Debug)]
 struct RespError {

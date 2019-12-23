@@ -75,9 +75,7 @@ fn load_pem_certs(cert_path: &str) -> Result<Vec<Certificate>, Error> {
             }
             Ok(certs)
         }
-        Err(_) => {
-            return Err(Error::Other(format!("invalid cert file: {}", cert_path)));
-        }
+        Err(_) => Err(Error::Other(format!("invalid cert file: {}", cert_path))),
     }
 }
 
@@ -93,8 +91,6 @@ fn load_pem_keys(key_path: &str) -> Result<Vec<PrivateKey>, Error> {
             }
             Ok(keys)
         }
-        Err(_) => {
-            return Err(Error::Other(format!("invalid key file: {}", key_path)));
-        }
+        Err(_) => Err(Error::Other(format!("invalid key file: {}", key_path))),
     }
 }

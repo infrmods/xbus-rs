@@ -1,15 +1,21 @@
 use crate::cert::get_cert_cn;
 use crate::error::Error;
+use bytes::{Buf, BufMut};
 use futures::prelude::*;
-use hyper::client::connect::{Connect, Connected, Destination};
+use hyper::client::connect::{Connected, Connection};
+use hyper::service::Service;
+use hyper::Uri;
 use rustls::{self, Certificate, ClientConfig, PrivateKey};
-use std::io;
+use std::io::Error as IoErr;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
 use webpki;
+use webpki::DNSNameRef;
 use webpki_roots;
 
 pub trait TlsClientConfigExt {
@@ -31,74 +37,163 @@ impl TlsClientConfigExt for ClientConfig {
     }
 }
 
-pub struct HttpsConnector<C: Connect> {
-    config: Arc<ClientConfig>,
-    connector: C,
+#[derive(Clone)]
+pub struct HttpsConnector<T> {
+    http: T,
+    tls: TlsConnector,
 }
 
-impl<C: Connect> HttpsConnector<C> {
-    pub fn new(mut config: ClientConfig, connector: C) -> HttpsConnector<C> {
+impl<T> HttpsConnector<T> {
+    pub fn new(mut config: ClientConfig, http: T) -> HttpsConnector<T> {
         config
             .root_store
             .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         HttpsConnector {
-            config: Arc::new(config),
-            connector,
+            http,
+            tls: Arc::new(config).into(),
         }
     }
 }
 
-impl<C> Connect for HttpsConnector<C>
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+impl<T> Service<Uri> for HttpsConnector<T>
 where
-    C: Connect<Error = io::Error>,
-    C::Transport: 'static,
-    C::Future: 'static,
+    T: Service<Uri>,
+    T::Response: AsyncRead + AsyncWrite + Send + Unpin,
+    T::Future: Send + 'static,
+    T::Error: Into<BoxError>,
 {
-    type Transport = TlsStream<C::Transport>;
-    type Error = io::Error;
-    type Future = HttpsConnecting<C>;
+    type Response = MaybeHttpsStream<T::Response>;
+    type Error = BoxError;
+    type Future = HttpsConnecting<T::Response>;
 
-    fn connect(&self, dst: Destination) -> Self::Future {
-        HttpsConnecting {
-            domain: dst.host().to_string(),
-            http_conn_fut: Some(self.connector.connect(dst)),
-            connected: None,
-            tls_connector: TlsConnector::from(self.config.clone()),
-            tls_conn_fut: None,
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self.http.poll_ready(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        let is_https = dst.scheme_str() == Some("https");
+        let host = dst.host().unwrap_or("").to_owned();
+        let connecting = self.http.call(dst);
+        let tls = self.tls.clone();
+        let fut = async move {
+            let tcp = connecting.await.map_err(Into::into)?;
+            let maybe = if is_https {
+                let domain = DNSNameRef::try_from_ascii_str(&host).unwrap();
+                let tls = tls.connect(domain, tcp).await?;
+                MaybeHttpsStream::Tls(tls)
+            } else {
+                MaybeHttpsStream::Http(tcp)
+            };
+            Ok(maybe)
+        };
+        HttpsConnecting(Box::pin(fut))
+    }
+}
+
+pub enum MaybeHttpsStream<T> {
+    Http(T),
+    Tls(TlsStream<T>),
+}
+
+impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeHttpsStream<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, IoErr>> {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_read(cx, buf),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_read(cx, buf),
+        }
+    }
+
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
+        match self {
+            MaybeHttpsStream::Http(http) => http.prepare_uninitialized_buffer(buf),
+            MaybeHttpsStream::Tls(tls) => tls.prepare_uninitialized_buffer(buf),
+        }
+    }
+
+    fn poll_read_buf<B: BufMut>(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut B,
+    ) -> Poll<Result<usize, IoErr>>
+    where
+        Self: Sized,
+    {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_read_buf(cx, buf),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_read_buf(cx, buf),
         }
     }
 }
 
-pub struct HttpsConnecting<C: Connect> {
-    domain: String,
-    http_conn_fut: Option<C::Future>,
-    connected: Option<Connected>,
-    tls_connector: TlsConnector,
-    tls_conn_fut: Option<tokio_rustls::Connect<C::Transport>>,
+impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeHttpsStream<T> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, IoErr>> {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_write(cx, buf),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), IoErr>> {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_flush(cx),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), IoErr>> {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_shutdown(cx),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_shutdown(cx),
+        }
+    }
+
+    fn poll_write_buf<B: Buf>(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut B,
+    ) -> Poll<Result<usize, IoErr>>
+    where
+        Self: Sized,
+    {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_write_buf(cx, buf),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_write_buf(cx, buf),
+        }
+    }
 }
 
-impl<C: Connect<Error = io::Error>> Future for HttpsConnecting<C> {
-    type Output = Result<(TlsStream<C::Transport>, Connected), io::Error>;
+impl<T: AsyncRead + AsyncWrite + Connection + Unpin> Connection for MaybeHttpsStream<T> {
+    fn connected(&self) -> Connected {
+        match self {
+            MaybeHttpsStream::Http(s) => s.connected(),
+            MaybeHttpsStream::Tls(s) => s.get_ref().0.connected(),
+        }
+    }
+}
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        if let Some(http_conn_fut) = self.http_conn_fut.as_mut() {
-            match ready!(Pin::new(http_conn_fut).poll(cx)) {
-                Ok((stream, connected)) => {
-                    self.connected = Some(connected);
-                    let domain = webpki::DNSNameRef::try_from_ascii_str(&self.domain).unwrap();
-                    self.tls_conn_fut = Some(self.tls_connector.connect(domain, stream));
-                    self.http_conn_fut = None;
-                }
-                Err(e) => {
-                    return Poll::Ready(Err(e));
-                }
-            }
-        }
-        if let Some(tls_conn_fut) = self.tls_conn_fut.as_mut() {
-            let stream = ready!(Pin::new(tls_conn_fut).poll(cx))?;
-            return Poll::Ready(Ok((stream, self.connected.take().unwrap())));
-        }
-        Poll::Pending
+type BoxedFut<T> = Pin<Box<dyn Future<Output = Result<MaybeHttpsStream<T>, BoxError>> + Send>>;
+
+pub struct HttpsConnecting<T>(BoxedFut<T>);
+
+impl<T: AsyncRead + AsyncWrite + Unpin> Future for HttpsConnecting<T> {
+    type Output = Result<MaybeHttpsStream<T>, BoxError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.0).poll(cx)
     }
 }
 

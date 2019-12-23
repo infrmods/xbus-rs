@@ -4,9 +4,9 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::spawn;
-use tokio::timer::delay;
+use tokio::time::delay_for;
 
 const WATCH_DELAY: u64 = 5;
 
@@ -64,7 +64,7 @@ where
 
     fn watch_once(&mut self, to_delay: bool) {
         if to_delay {
-            self.watch_future = delay(Instant::now() + Duration::from_secs(WATCH_DELAY))
+            self.watch_future = delay_for(Duration::from_secs(WATCH_DELAY))
                 .map(|_| Ok(None))
                 .boxed();
         } else {

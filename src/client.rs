@@ -391,7 +391,7 @@ pub struct ExtensionEvent {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct ExtensionWatchResult {
-    pub events: Vec<ExtensionEvent>,
+    pub events: Option<Vec<ExtensionEvent>>,
     pub revision: u64,
 }
 

@@ -379,7 +379,7 @@ impl Client {
         let client = self.clone();
         let service = service.to_string();
         WatchTask::spawn(revision, move |revision| match revision {
-            Some(revision) => client.watch_service_once(&service, revision, timeout),
+            Some(revision) => client.watch_service_once(&service, revision + 1, timeout),
             None => Box::new(client.get_service(&service).map(Some)),
         })
     }

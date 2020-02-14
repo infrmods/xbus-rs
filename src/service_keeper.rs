@@ -1,12 +1,14 @@
 use super::client::{AppNode, Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
-use error::Error;
+use crate::error::Error;
+use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
-use futures::sync::{mpsc, oneshot};
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
-use std::time::{Duration, Instant};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::spawn;
-use tokio::timer::Delay;
+use tokio::time::delay_for;
 
 const GRANT_RETRY_INTERVAL: u64 = 5;
 
@@ -52,7 +54,7 @@ impl ServiceKeeper {
         let _ = self.cmd_tx.unbounded_send(Cmd::UpdateEndpoint(endpoint));
     }
 
-    pub fn plug(&self, service: &ZoneService) -> Box<Future<Item = (), Error = Error> + Send> {
+    pub fn plug(&self, service: &ZoneService) -> impl Future<Output = Result<(), Error>> {
         self.plug_replaceable(service, false)
     }
 
@@ -60,20 +62,21 @@ impl ServiceKeeper {
         &self,
         service: &ZoneService,
         replaceable: bool,
-    ) -> Box<Future<Item = (), Error = Error> + Send> {
+    ) -> impl Future<Output = Result<(), Error>> {
         let (tx, rx) = oneshot::channel();
         if self
             .cmd_tx
             .unbounded_send(Cmd::Plug(service.clone(), tx, replaceable))
             .is_err()
         {
-            return Box::new(Err(Error::Other("keep task closed".to_string())).into_future());
+            return future::err(Error::Other("keep task closed".to_string())).boxed();
         }
-        Box::new(rx.then(|r| match r {
+        rx.map(|r| match r {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(Error::Other("keep task closed".to_string())),
-        }))
+        })
+        .boxed()
     }
 
     pub fn unplug<S: Into<String>>(&self, service: S, zone: S) {
@@ -121,10 +124,10 @@ struct KeepTask {
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
     services: HashMap<(String, String), ZoneService>,
     lease_result: Option<LeaseGrantResult>,
-    lease_future: Option<Box<Future<Item = LeaseGrantResult, Error = Error> + Send>>,
-    replug_future: Option<Box<Future<Item = PlugResult, Error = Error> + Send>>,
+    lease_future: Option<Pin<Box<dyn Future<Output = Result<LeaseGrantResult, Error>> + Send>>>,
+    replug_future: Option<Pin<Box<dyn Future<Output = Result<PlugResult, Error>> + Send>>>,
     replug_backs: HashMap<(String, String), oneshot::Sender<Result<(), Error>>>,
-    lease_keep_future: Option<Box<Future<Item = (), Error = Error> + Send>>,
+    lease_keep_future: Option<Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>>,
     is_first_online: bool,
     online_notifiers: Vec<mpsc::UnboundedSender<bool>>,
 }
@@ -160,17 +163,14 @@ impl KeepTask {
     fn new_lease(&mut self, delay_new: bool) {
         let app_node = self.app_node.clone();
         if delay_new {
-            let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
-                .map_err(|e| Error::Other(format!("lease keep sleep fail: {}", e)));
             let (client, ttl) = (self.client.clone(), self.ttl);
-            self.lease_future =
-                Some(Box::new(delay.and_then(move |_| {
-                    client.grant_lease(ttl, app_node.as_ref())
-                })));
+            self.lease_future = Some(
+                delay_for(Duration::from_secs(GRANT_RETRY_INTERVAL))
+                    .then(move |_| client.grant_lease(ttl, app_node.as_ref()))
+                    .boxed(),
+            );
         } else {
-            self.lease_future = Some(Box::new(
-                self.client.grant_lease(self.ttl, app_node.as_ref()),
-            ));
+            self.lease_future = Some(self.client.grant_lease(self.ttl, app_node.as_ref()).boxed());
         }
         self.lease_keep_future = None;
         self.lease_result = None;
@@ -180,13 +180,12 @@ impl KeepTask {
     fn keep_lease(&mut self) {
         self.lease_keep_future = None;
         if let Some(ref mut lease_result) = self.lease_result {
-            let delay =
-                Delay::new(Instant::now() + Duration::from_secs(lease_result.ttl as u64 / 2))
-                    .map_err(|e| Error::Other(format!("keep lease sleep fail: {}", e)));
             let (client, lease_id) = (self.client.clone(), lease_result.lease_id);
-            self.lease_keep_future = Some(Box::new(
-                delay.and_then(move |_| client.keepalive_lease(lease_id)),
-            ));
+            self.lease_keep_future = Some(
+                delay_for(Duration::from_secs(lease_result.ttl as u64 / 2))
+                    .then(move |_| client.keepalive_lease(lease_id))
+                    .boxed(),
+            );
         } else {
             error!("missing lease result");
         }
@@ -202,23 +201,29 @@ impl KeepTask {
 
             let services: Vec<ZoneService> = self.services.values().cloned().collect();
             if delay_plug {
-                let delay = Delay::new(Instant::now() + Duration::from_secs(GRANT_RETRY_INTERVAL))
-                    .map_err(|e| Error::Other(format!("replug sleep fail: {}", e)));
                 let (client, endpoint, lease_id) = (
                     self.client.clone(),
                     self.endpoint.clone(),
                     lease_result.lease_id,
                 );
-                self.replug_future = Some(Box::new(delay.and_then(move |_| {
-                    client.plug_all_services(&services, &endpoint, Some(lease_id), None)
-                })));
+                self.replug_future = Some(
+                    delay_for(Duration::from_secs(GRANT_RETRY_INTERVAL))
+                        .then(move |_| {
+                            client.plug_all_services(&services, &endpoint, Some(lease_id), None)
+                        })
+                        .boxed(),
+                );
             } else {
-                self.replug_future = Some(Box::new(self.client.plug_all_services(
-                    &services,
-                    &self.endpoint,
-                    Some(lease_result.lease_id),
-                    None,
-                )));
+                self.replug_future = Some(
+                    self.client
+                        .plug_all_services(
+                            &services,
+                            &self.endpoint,
+                            Some(lease_result.lease_id),
+                            None,
+                        )
+                        .boxed(),
+                );
             }
         } else {
             error!("missing lease result");
@@ -227,23 +232,20 @@ impl KeepTask {
 
     fn plug_one(&mut self, service: ZoneService, tx: oneshot::Sender<Result<(), Error>>) {
         if let Some(ref lease_result) = self.lease_result {
-            let cmd_tx = self.cmd_tx.clone();
+            let mut cmd_tx = self.cmd_tx.clone();
             spawn(
                 self.client
                     .plug_service(&service, &self.endpoint, None, Some(lease_result.lease_id))
-                    .then(move |r| {
-                        match r {
-                            Ok(_) => {
-                                let _ = tx.send(Ok(()));
+                    .map(move |r| match r {
+                        Ok(_) => {
+                            let _ = tx.send(Ok(()));
+                        }
+                        Err(e) => {
+                            if !e.can_retry() {
+                                let _ = cmd_tx.send(Cmd::Cancel(service.service, service.zone));
                             }
-                            Err(e) => {
-                                if !e.can_retry() {
-                                    let _ = cmd_tx.send(Cmd::Cancel(service.service, service.zone));
-                                }
-                                let _ = tx.send(Err(e));
-                            }
-                        };
-                        Ok(())
+                            let _ = tx.send(Err(e));
+                        }
                     }),
             );
         } else {
@@ -251,10 +253,10 @@ impl KeepTask {
         }
     }
 
-    fn process_cmds(&mut self) -> bool {
+    fn process_cmds(&mut self, cx: &mut Context) -> bool {
         loop {
-            match self.cmd_rx.poll() {
-                Ok(Async::Ready(Some(cmd))) => match cmd {
+            match Pin::new(&mut self.cmd_rx).poll_next(cx) {
+                Poll::Ready(Some(cmd)) => match cmd {
                     Cmd::Start => {
                         if !self.started {
                             self.started = true;
@@ -307,14 +309,13 @@ impl KeepTask {
                                         &key.1,
                                         &self.endpoint.address.to_string(),
                                     )
-                                    .then(move |r| {
+                                    .map(move |r| {
                                         if let Err(e) = r {
                                             error!(
                                                 "unplug service {}:{} fail: {}",
                                                 key.0, key.1, e
                                             );
                                         }
-                                        Ok(())
                                     }),
                             );
                         }
@@ -339,11 +340,11 @@ impl KeepTask {
                         self.online_notifiers.push(tx);
                     }
                 },
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                _ => {
+                Poll::Ready(None) => {
                     return false;
+                }
+                Poll::Pending => {
+                    break;
                 }
             }
         }
@@ -354,30 +355,34 @@ impl KeepTask {
         if let Some(ref lease_result) = self.lease_result {
             let lease_id = lease_result.lease_id;
             let fut = match &self.app_node {
-                Some(node) => self.client.revoke_lease_with_node(
-                    lease_id,
-                    &node.key,
-                    node.label.as_ref().map(|s| s.as_str()),
-                ),
-                None => self.client.revoke_lease(lease_id),
+                Some(node) => self
+                    .client
+                    .revoke_lease_with_node(
+                        lease_id,
+                        &node.key,
+                        node.label.as_ref().map(|s| s.as_str()),
+                    )
+                    .boxed(),
+                None => self.client.revoke_lease(lease_id).boxed(),
             };
-            spawn(fut.then(move |r| {
+            spawn(fut.map(move |r| {
                 if let Err(e) = r {
-                    error!("revoke lease {} fail: {}", lease_id, e);
+                    if !e.is_not_found() {
+                        error!("revoke lease {} fail: {}", lease_id, e);
+                    }
                 }
                 let _ = tx.send(());
-                Ok(())
             }));
         }
     }
 
-    fn process_futures(&mut self) {
+    fn process_futures(&mut self, cx: &mut Context) {
         let mut ct = true;
         while ct {
             ct = false;
-            if let Some(r) = self.lease_future.as_mut().map(|f| f.poll()) {
+            if let Some(r) = self.lease_future.as_mut().map(|f| Pin::new(f).poll(cx)) {
                 match r {
-                    Ok(Async::Ready(result)) => {
+                    Poll::Ready(Ok(result)) => {
                         info!("grant lease ok: {:x}", result.lease_id);
                         if result.new_app_node == Some(true) {
                             let is_first_online = self.is_first_online;
@@ -391,17 +396,17 @@ impl KeepTask {
                         self.replug_all(false);
                         ct = true;
                     }
-                    Err(e) => {
+                    Poll::Ready(Err(e)) => {
                         self.new_lease(!e.is_timeout());
                         ct = true;
                         error!("grant lease fail: {}", e);
                     }
-                    Ok(Async::NotReady) => {}
+                    Poll::Pending => {}
                 }
             }
-            if let Some(r) = self.replug_future.as_mut().map(|f| f.poll()) {
+            if let Some(r) = self.replug_future.as_mut().map(|f| Pin::new(f).poll(cx)) {
                 match r {
-                    Ok(Async::Ready(result)) => {
+                    Poll::Ready(Ok(result)) => {
                         info!("services replugged ok");
                         self.replug_future = None;
                         for (_, sender) in self.replug_backs.drain() {
@@ -414,7 +419,7 @@ impl KeepTask {
                             }
                         }
                     }
-                    Err(Error::NotPermitted(_, services)) => {
+                    Poll::Ready(Err(Error::NotPermitted(_, services))) => {
                         warn!("not permitted services: {}", services.join(", "));
                         let set: HashSet<String> = HashSet::from_iter(services);
                         self.services.retain(|k, _| {
@@ -439,21 +444,25 @@ impl KeepTask {
                         self.replug_all(false);
                         ct = true;
                     }
-                    Err(e) => {
+                    Poll::Ready(Err(e)) => {
                         error!("services replug failed: {}", e);
                         self.replug_all(!e.is_timeout());
                         ct = true;
                     }
-                    Ok(Async::NotReady) => {}
+                    Poll::Pending => {}
                 }
             }
-            if let Some(r) = self.lease_keep_future.as_mut().map(|f| f.poll()) {
+            if let Some(r) = self
+                .lease_keep_future
+                .as_mut()
+                .map(|f| Pin::new(f).poll(cx))
+            {
                 match r {
-                    Ok(Async::Ready(_)) => {
+                    Poll::Ready(Ok(_)) => {
                         self.keep_lease();
                         ct = true;
                     }
-                    Err(e) => {
+                    Poll::Ready(Err(e)) => {
                         error!("keep lease fail: {}", e);
                         if e.is_timeout() {
                             self.keep_lease();
@@ -462,7 +471,7 @@ impl KeepTask {
                         }
                         ct = true;
                     }
-                    Ok(Async::NotReady) => {}
+                    Poll::Pending => {}
                 }
             }
         }
@@ -470,15 +479,14 @@ impl KeepTask {
 }
 
 impl Future for KeepTask {
-    type Item = ();
-    type Error = ();
+    type Output = ();
 
-    fn poll(&mut self) -> Poll<(), ()> {
-        if !self.process_cmds() {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        if !self.process_cmds(cx) {
             warn!("service keeper exit");
-            return Ok(Async::Ready(()));
+            return Poll::Pending;
         }
-        self.process_futures();
-        Ok(Async::NotReady)
+        self.process_futures(cx);
+        Poll::Pending
     }
 }

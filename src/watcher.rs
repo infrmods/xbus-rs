@@ -1,10 +1,12 @@
 use super::client::RevisionResult;
 use super::error::Error;
+use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
-use futures::sync::{mpsc, oneshot};
-use std::time::{Duration, Instant};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::spawn;
-use tokio::timer::Delay;
+use tokio::time::delay_for;
 
 const WATCH_DELAY: u64 = 5;
 
@@ -35,13 +37,16 @@ pub(crate) struct WatchTask<T, WF> {
 
     last_revision: Option<u64>,
     watch: WF,
-    watch_future: Box<Future<Item = Option<T>, Error = Error> + Send>,
+    watch_future: Pin<Box<dyn Future<Output = Result<Option<T>, Error>> + Send>>,
 }
 
 impl<T, WF> WatchTask<T, WF>
 where
     T: RevisionResult + Send + 'static,
-    WF: Fn(Option<u64>) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
+    WF: Fn(Option<u64>) -> Pin<Box<dyn Future<Output = Result<Option<T>, Error>> + Send>>
+        + Send
+        + Unpin
+        + 'static,
 {
     pub fn spawn(revision: Option<u64>, watch: WF) -> WatchStream<T> {
         let (tx, rx) = mpsc::unbounded();
@@ -57,13 +62,11 @@ where
         WatchStream::new(handle, rx)
     }
 
-    fn watch_once(&mut self, delay: bool) {
-        if delay {
-            self.watch_future = Box::new(
-                Delay::new(Instant::now() + Duration::from_secs(WATCH_DELAY))
-                    .map(|_| None)
-                    .map_err(|e| Error::Other(format!("watcher sleep fail: {}", e))),
-            );
+    fn watch_once(&mut self, to_delay: bool) {
+        if to_delay {
+            self.watch_future = delay_for(Duration::from_secs(WATCH_DELAY))
+                .map(|_| Ok(None))
+                .boxed();
         } else {
             self.watch_future = (self.watch)(self.last_revision);
         }
@@ -73,40 +76,45 @@ where
 impl<T, WF> Future for WatchTask<T, WF>
 where
     T: RevisionResult + Send + 'static,
-    WF: Fn(Option<u64>) -> Box<Future<Item = Option<T>, Error = Error> + Send> + Send + 'static,
+    WF: Fn(Option<u64>) -> Pin<Box<dyn Future<Output = Result<Option<T>, Error>> + Send>>
+        + Send
+        + Unpin
+        + 'static,
 {
-    type Item = ();
-    type Error = ();
+    type Output = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            match self.close_rx.poll() {
-                Ok(Async::NotReady) => {}
-                Ok(Async::Ready(_)) | Err(_) => {
-                    return Ok(Async::Ready(()));
+            match Pin::new(&mut self.close_rx).poll(cx) {
+                Poll::Pending => {}
+                Poll::Ready(_) => {
+                    return Poll::Ready(());
                 }
             }
-            match self.watch_future.poll() {
-                Ok(Async::NotReady) => {
+            match Pin::new(&mut self.watch_future).poll(cx) {
+                Poll::Pending => {
                     break;
                 }
-                Ok(Async::Ready(Some(result))) => {
-                    self.last_revision = Some(result.get_revision());
+                Poll::Ready(Ok(Some(result))) => {
+                    let revision = result.get_revision();
+                    if revision > 0 {
+                        self.last_revision = Some(revision);
+                    }
                     if self.tx.unbounded_send(result).is_err() {
-                        return Ok(Async::Ready(()));
+                        return Poll::Ready(());
                     }
                     self.watch_once(false);
                 }
-                Ok(Async::Ready(None)) => {
+                Poll::Ready(Ok(None)) => {
                     self.watch_once(false);
                 }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     error!("watch fail: {}", e);
                     self.watch_once(true);
                 }
             }
         }
-        Ok(Async::NotReady)
+        Poll::Pending
     }
 }
 
@@ -127,9 +135,8 @@ impl<T> WatchStream<T> {
 
 impl<T> Stream for WatchStream<T> {
     type Item = T;
-    type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.rx.poll()
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.rx).poll_next(cx)
     }
 }

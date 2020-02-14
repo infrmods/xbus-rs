@@ -2,29 +2,31 @@
 name = "xbus"
 version = "0.1.0"
 authors = ["lolynx <londevil@gmail.com>"]
+edition = "2018"
 
 [dependencies]
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
-serde_yaml = "0.7"
-hyper = "0.12"
+serde_yaml = "0.8"
+hyper = "0.13"
 url = "1.7"
-futures = "0.1"
-tokio = "0.1"
-tokio-io = "0.1"
+futures = { version="0.3", features=["compat", "async-await"]}
+tokio = {version="0.2", features=["stream", "macros"]}
 log = "0.4"
-http = "0.1"
-percent-encoding = "1.0"
-webpki = "0.18"
-webpki-roots = "0.15"
-tokio-rustls = "0.7"
-ring = "0.13"
-untrusted = "0.6"
+http = "*"
+percent-encoding = "2.1"
+tokio-rustls = "0.12"
+webpki = "*"
+webpki-roots = "*"
+ring = "*"
+untrusted = "*"
+bytes = "*"
 
 [dependencies.rustls]
-version = "0.13"
+version = "*"
 features = ["dangerous_configuration"]
 
 [dev-dependencies]
-env_logger = "0.4"
+env_logger = "0.7"
+clap = "2.33"

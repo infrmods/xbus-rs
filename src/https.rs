@@ -32,7 +32,9 @@ impl TlsClientConfigExt for ClientConfig {
     fn add_cert_key(&mut self, certs: Vec<Certificate>, key: PrivateKey) -> Result<String, Error> {
         let cn =
             get_cert_cn(&certs[0].0).ok_or_else(|| Error::Other("get cert cn fail".to_string()))?;
-        self.set_single_client_cert(certs, key);
+        if let Err(e) = self.set_single_client_cert(certs, key) {
+            return Err(Error::Ssl(format!("add client cert fail: {}", e)));
+        }
         Ok(cn)
     }
 }

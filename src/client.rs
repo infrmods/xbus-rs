@@ -387,6 +387,12 @@ impl Client {
 pub struct ExtensionEvent {
     pub service: String,
     pub zone: String,
+    pub event: String,
+}
+
+impl ExtensionEvent {
+    pub const PLUG: &'static str = "plug";
+    pub const DELETE: &'static str = "delete";
 }
 
 #[derive(Deserialize, Clone, Debug)]

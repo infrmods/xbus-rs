@@ -117,6 +117,7 @@ impl ServiceKeeper {
 struct KeepTask {
     client: Client,
     started: bool,
+    closing: bool,
     ttl: Option<i64>,
     endpoint: ServiceEndpoint,
     app_node: Option<AppNode>,
@@ -144,6 +145,7 @@ impl KeepTask {
         KeepTask {
             client: client.clone(),
             started: false,
+            closing: false,
             ttl,
             app_node,
             endpoint,
@@ -253,102 +255,84 @@ impl KeepTask {
         }
     }
 
-    fn process_cmds(&mut self, cx: &mut Context) -> bool {
-        loop {
-            match Pin::new(&mut self.cmd_rx).poll_next(cx) {
-                Poll::Ready(Some(cmd)) => match cmd {
-                    Cmd::Start => {
-                        if !self.started {
-                            self.started = true;
-                            if self.lease_result.is_none() {
-                                if self.lease_future.is_none() {
-                                    self.new_lease(false);
-                                }
-                            } else {
-                                self.replug_all(false);
-                            }
-                        }
-                    }
-                    Cmd::UpdateEndpoint(endpoint) => {
-                        self.endpoint = endpoint;
-                        if !self.services.is_empty() && self.started {
+    fn process_cmd(&mut self, cmd: Cmd) {
+        match cmd {
+            Cmd::Start => {
+                if !self.started {
+                    self.started = true;
+                    if self.lease_result.is_none() {
+                        if self.lease_future.is_none() {
                             self.new_lease(false);
                         }
+                    } else {
+                        self.replug_all(false);
                     }
-                    Cmd::Plug(service, tx, replaceable) => {
-                        let key = (service.service.clone(), service.zone.clone());
-                        if self.services.contains_key(&key) && !replaceable {
-                            let _ = tx.send(Err(Error::Other(format!(
-                                "{}:{} has been plugged",
-                                key.0, key.1
-                            ))));
-                        } else {
-                            self.services.insert(key.clone(), service.clone());
-                            if self.started {
-                                if self.lease_result.is_some() {
-                                    self.plug_one(service, tx);
-                                } else {
-                                    self.replug_backs.insert(key, tx);
-                                    if self.lease_future.is_none() {
-                                        self.new_lease(false);
-                                    }
-                                }
-                            } else {
-                                self.replug_backs.insert(key, tx);
-                            }
-                        }
-                    }
-                    Cmd::Unplug(service, zone) => {
-                        let key = (service, zone);
-                        self.replug_backs.remove(&key);
-                        if self.services.remove(&key).is_some() && self.started {
-                            spawn(
-                                self.client
-                                    .unplug_service(
-                                        &key.0,
-                                        &key.1,
-                                        &self.endpoint.address.to_string(),
-                                    )
-                                    .map(move |r| {
-                                        if let Err(e) = r {
-                                            error!(
-                                                "unplug service {}:{} fail: {}",
-                                                key.0, key.1, e
-                                            );
-                                        }
-                                    }),
-                            );
-                        }
-                    }
-                    Cmd::Cancel(service, zone) => {
-                        let key = (service, zone);
-                        self.services.remove(&key);
-                        self.replug_backs.remove(&key);
-                    }
-                    Cmd::Clear(tx) => {
-                        self.revoke_lease(tx);
-                        self.lease_keep_future = None;
-                        self.replug_future = None;
-                        self.replug_backs.clear();
-                        self.services.clear();
-                    }
-                    Cmd::RevokeAndClose(tx) => {
-                        self.revoke_lease(tx);
-                        return false;
-                    }
-                    Cmd::NotifyNodeOnline(tx) => {
-                        self.online_notifiers.push(tx);
-                    }
-                },
-                Poll::Ready(None) => {
-                    return false;
-                }
-                Poll::Pending => {
-                    break;
                 }
             }
+            Cmd::UpdateEndpoint(endpoint) => {
+                self.endpoint = endpoint;
+                if !self.services.is_empty() && self.started {
+                    self.new_lease(false);
+                }
+            }
+            Cmd::Plug(service, tx, replaceable) => {
+                let key = (service.service.clone(), service.zone.clone());
+                if self.services.contains_key(&key) && !replaceable {
+                    let _ = tx.send(Err(Error::Other(format!(
+                        "{}:{} has been plugged",
+                        key.0, key.1
+                    ))));
+                } else {
+                    self.services.insert(key.clone(), service.clone());
+                    if self.started {
+                        if self.lease_result.is_some() {
+                            self.plug_one(service, tx);
+                        } else {
+                            self.replug_backs.insert(key, tx);
+                            if self.lease_future.is_none() {
+                                self.new_lease(false);
+                            }
+                        }
+                    } else {
+                        self.replug_backs.insert(key, tx);
+                    }
+                }
+            }
+            Cmd::Unplug(service, zone) => {
+                let key = (service, zone);
+                self.replug_backs.remove(&key);
+                if self.services.remove(&key).is_some() && self.started {
+                    spawn(
+                        self.client
+                            .unplug_service(&key.0, &key.1, &self.endpoint.address.to_string())
+                            .map(move |r| {
+                                if let Err(e) = r {
+                                    error!("unplug service {}:{} fail: {}", key.0, key.1, e);
+                                }
+                            }),
+                    );
+                }
+            }
+            Cmd::Cancel(service, zone) => {
+                let key = (service, zone);
+                self.services.remove(&key);
+                self.replug_backs.remove(&key);
+            }
+            Cmd::Clear(tx) => {
+                self.revoke_lease(tx);
+                self.lease_keep_future = None;
+                self.replug_future = None;
+                self.replug_backs.clear();
+                self.services.clear();
+            }
+            Cmd::RevokeAndClose(tx) => {
+                self.revoke_lease(tx);
+                self.closing = true;
+            }
+            Cmd::NotifyNodeOnline(tx) => {
+                self.online_notifiers.push(tx);
+            }
         }
-        true
     }
 
     fn revoke_lease(&self, tx: oneshot::Sender<()>) {
@@ -482,11 +466,22 @@ impl Future for KeepTask {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        if !self.process_cmds(cx) {
-            warn!("service keeper exit");
-            return Poll::Pending;
+        while !self.closing {
+            match Pin::new(&mut self.cmd_rx).poll_next(cx) {
+                Poll::Ready(Some(cmd)) => {
+                    self.process_cmd(cmd);
+                }
+                Poll::Ready(None) | Poll::Pending => {
+                    self.closing = true;
+                    break;
+                }
+            }
         }
-        self.process_futures(cx);
-        Poll::Pending
+        if !self.closing {
+            self.process_futures(cx);
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
     }
 }

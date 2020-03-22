@@ -471,8 +471,11 @@ impl Future for KeepTask {
                 Poll::Ready(Some(cmd)) => {
                     self.process_cmd(cmd);
                 }
-                Poll::Ready(None) | Poll::Pending => {
+                Poll::Ready(None) => {
                     self.closing = true;
+                    break;
+                }
+                Poll::Pending => {
                     break;
                 }
             }

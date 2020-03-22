@@ -69,19 +69,7 @@ impl Display for Error {
     }
 }
 
-impl StdError for Error {
-    fn description(&self) -> &str {
-        match self {
-            Error::Io(e) => e.description(),
-            Error::Http(e) => e,
-            Error::Ssl(e) => e,
-            Error::Serialize(e) => e,
-            Error::Request(_, message) => message,
-            Error::NotPermitted(message, _) => message,
-            Error::Other(e) => e,
-        }
-    }
-}
+impl StdError for Error {}
 
 impl From<IOError> for Error {
     fn from(err: IOError) -> Error {

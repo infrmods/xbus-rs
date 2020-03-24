@@ -220,12 +220,12 @@ impl<T> Response<T> {
     }
 }
 
-pub struct Form {
-    serializer: form_urlencoded::Serializer<String>,
+pub struct Form<'a> {
+    serializer: form_urlencoded::Serializer<'a, String>,
 }
 
-impl Form {
-    pub fn new() -> Form {
+impl<'a> Form<'a> {
+    pub fn new() -> Form<'a> {
         Form {
             serializer: form_urlencoded::Serializer::new(String::new()),
         }
@@ -249,7 +249,7 @@ impl Form {
     }
 }
 
-impl Into<Body> for Form {
+impl<'a> Into<Body> for Form<'a> {
     fn into(mut self) -> Body {
         Body::from(self.serializer.finish())
     }

@@ -58,7 +58,7 @@ impl Client {
             .max_idle_connections
             .unwrap_or(Self::DEFAULT_MAX_IDLE_PER_HOST);
         let client = HttpClient::builder()
-            .max_idle_per_host(max_idle_per_host)
+            .pool_max_idle_per_host(max_idle_per_host)
             .build(https_connector);
         Ok(Client {
             app_name,
@@ -68,7 +68,7 @@ impl Client {
     }
 
     pub fn get_app_name(&self) -> Option<&str> {
-        self.app_name.as_ref().map(|s| s.as_str())
+        self.app_name.as_deref()
     }
 
     fn request<'a>(
@@ -250,7 +250,7 @@ impl Client {
         let app = app.to_string();
         let label = label.map(|s| s.to_string());
         WatchTask::spawn(None, move |revision| {
-            let label: Option<&str> = label.as_ref().map(|s| s.as_str());
+            let label: Option<&str> = label.as_deref();
             match revision {
                 Some(revision) => client
                     .watch_app_nodes_once(&app, label, revision + 1, timeout)

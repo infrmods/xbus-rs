@@ -10,8 +10,8 @@ serde_derive = "1.0"
 serde_json = "1.0"
 serde_yaml = "0.8"
 hyper = "0.13"
-url = "1.7"
-futures = { version="0.3", features=["compat", "async-await"]}
+url = "2.1"
+futures = "0.3"
 tokio = {version="0.2", features=["stream", "macros"]}
 log = "0.4"
 http = "*"

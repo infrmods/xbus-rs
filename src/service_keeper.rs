@@ -114,6 +114,7 @@ impl ServiceKeeper {
     }
 }
 
+#[allow(clippy::type_complexity)]
 struct KeepTask {
     client: Client,
     started: bool,
@@ -341,11 +342,7 @@ impl KeepTask {
             let fut = match &self.app_node {
                 Some(node) => self
                     .client
-                    .revoke_lease_with_node(
-                        lease_id,
-                        &node.key,
-                        node.label.as_ref().map(|s| s.as_str()),
-                    )
+                    .revoke_lease_with_node(lease_id, &node.key, node.label.as_deref())
                     .boxed(),
                 None => self.client.revoke_lease(lease_id).boxed(),
             };

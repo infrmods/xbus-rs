@@ -340,18 +340,18 @@ impl Client {
         ServiceKeeper::new(&self, ttl, app_node, endpoint)
     }
 
-    pub fn watch_extension_once(
+    pub fn watch_service_desc_once(
         &self,
-        extension: &str,
+        zone: Option<&str>,
         revision: u64,
         timeout: Duration,
-    ) -> impl Future<Output = Result<Option<ExtensionWatchResult>, Error>> {
+    ) -> impl Future<Output = Result<Option<ServiceDescWatchResult>, Error>> {
         self.request_timeout(
             Method::GET,
-            &format!("/api/v1/service-extensions/{}", extension),
+            "/api/v1/service-descs",
             timeout + self.config.request_timeout,
         )
-        .param("watch", "true")
+        .param_opt("zone", zone)
         .param("revision", &format!("{}", revision))
         .param("timeout", &format!("{}", timeout.as_secs()))
         .send()
@@ -367,41 +367,51 @@ impl Client {
         })
     }
 
-    pub fn watch_extension(
+    pub fn watch_service_desc(
         &self,
-        extension: &str,
+        zone: Option<&str>,
         revision: Option<u64>,
         interval: Duration,
-    ) -> WatchStream<ExtensionWatchResult> {
+    ) -> WatchStream<ServiceDescWatchResult> {
         let client = self.clone();
-        let extension = extension.to_string();
+        let zone = zone.map(|s| s.to_string());
         WatchTask::spawn(revision, move |revision| {
             client
-                .watch_extension_once(&extension, revision.unwrap_or(0) + 1, interval)
+                .watch_service_desc_once(zone.as_deref(), revision.unwrap_or(0) + 1, interval)
                 .boxed()
         })
     }
 }
 
 #[derive(Deserialize, Clone, Debug)]
-pub struct ExtensionEvent {
+pub struct ServiceDesc {
     pub service: String,
     pub zone: String,
-    pub event: String,
+    #[serde(rename = "type")]
+    pub typ: String,
+    pub extension: Option<String>,
+    pub proto: Option<String>,
+    pub description: Option<String>,
 }
 
-impl ExtensionEvent {
-    pub const PLUG: &'static str = "plug";
+#[derive(Deserialize, Clone, Debug)]
+pub struct ServiceDescEvent {
+    pub event_type: String,
+    pub service: ServiceDesc,
+}
+
+impl ServiceDescEvent {
+    pub const PUT: &'static str = "put";
     pub const DELETE: &'static str = "delete";
 }
 
 #[derive(Deserialize, Clone, Debug)]
-pub struct ExtensionWatchResult {
-    pub events: Option<Vec<ExtensionEvent>>,
+pub struct ServiceDescWatchResult {
+    pub events: Option<Vec<ServiceDescEvent>>,
     pub revision: u64,
 }
 
-impl RevisionResult for ExtensionWatchResult {
+impl RevisionResult for ServiceDescWatchResult {
     fn get_revision(&self) -> u64 {
         self.revision
     }

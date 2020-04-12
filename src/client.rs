@@ -340,7 +340,7 @@ impl Client {
         ServiceKeeper::new(&self, ttl, app_node, endpoint)
     }
 
-    pub fn watch_service_desc_once(
+    pub fn watch_service_descs_once(
         &self,
         zone: Option<&str>,
         revision: u64,
@@ -367,7 +367,7 @@ impl Client {
         })
     }
 
-    pub fn watch_service_desc(
+    pub fn watch_service_descs(
         &self,
         zone: Option<&str>,
         revision: Option<u64>,
@@ -377,7 +377,7 @@ impl Client {
         let zone = zone.map(|s| s.to_string());
         WatchTask::spawn(revision, move |revision| {
             client
-                .watch_service_desc_once(zone.as_deref(), revision.unwrap_or(0) + 1, interval)
+                .watch_service_descs_once(zone.as_deref(), revision.unwrap_or(0) + 1, interval)
                 .boxed()
         })
     }

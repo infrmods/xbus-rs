@@ -121,7 +121,7 @@ impl Client {
 
     pub fn plug_service(
         &self,
-        service: &ZoneService,
+        service: &ServiceDesc,
         endpoint: &ServiceEndpoint,
         ttl: Option<i64>,
         lease_id: Option<i64>,
@@ -138,13 +138,13 @@ impl Client {
 
     pub fn plug_all_services(
         &self,
-        services: &[ZoneService],
+        services: &[ServiceDesc],
         endpoint: &ServiceEndpoint,
         lease_id: Option<i64>,
         ttl: Option<i64>,
     ) -> impl Future<Output = Result<PlugResult, Error>> {
         let form = form!("ttl" => ttl, "lease_id" => lease_id,
-                         "desces" => services, "endpoint" => endpoint);
+                         "descs" => services, "endpoint" => endpoint);
         self.request(Method::POST, "/api/v1/services")
             .form_result(form)
             .send()
@@ -383,7 +383,7 @@ impl Client {
     }
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServiceDesc {
     pub service: String,
     pub zone: String,
@@ -448,17 +448,10 @@ pub struct ServiceEndpoint {
     pub config: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ZoneService {
-    pub service: String,
-    pub zone: String,
-    #[serde(rename = "type")]
-    pub typ: String,
-    pub extension: Option<String>,
-    pub proto: Option<String>,
-    pub description: Option<String>,
-
-    #[serde(skip_serializing_if = "Vec::is_empty", default = "Vec::new")]
+    #[serde(flatten)]
+    pub desc: ServiceDesc,
     pub endpoints: Vec<ServiceEndpoint>,
 }
 
@@ -468,7 +461,7 @@ impl ZoneService {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Service {
     pub service: String,
     pub zones: HashMap<String, ZoneService>,

@@ -1,4 +1,4 @@
-use super::client::{AppNode, Client, LeaseGrantResult, PlugResult, ServiceEndpoint, ZoneService};
+use super::client::{AppNode, Client, LeaseGrantResult, PlugResult, ServiceDesc, ServiceEndpoint};
 use crate::error::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
@@ -15,7 +15,7 @@ const GRANT_RETRY_INTERVAL: u64 = 5;
 enum Cmd {
     Start,
     UpdateEndpoint(ServiceEndpoint),
-    Plug(ZoneService, oneshot::Sender<Result<(), Error>>, bool),
+    Plug(ServiceDesc, oneshot::Sender<Result<(), Error>>, bool),
     Unplug(String, String),
     Cancel(String, String),
     Clear(oneshot::Sender<()>),
@@ -54,13 +54,13 @@ impl ServiceKeeper {
         let _ = self.cmd_tx.unbounded_send(Cmd::UpdateEndpoint(endpoint));
     }
 
-    pub fn plug(&self, service: &ZoneService) -> impl Future<Output = Result<(), Error>> {
+    pub fn plug(&self, service: &ServiceDesc) -> impl Future<Output = Result<(), Error>> {
         self.plug_replaceable(service, false)
     }
 
     pub fn plug_replaceable(
         &self,
-        service: &ZoneService,
+        service: &ServiceDesc,
         replaceable: bool,
     ) -> impl Future<Output = Result<(), Error>> {
         let (tx, rx) = oneshot::channel();
@@ -124,7 +124,7 @@ struct KeepTask {
     app_node: Option<AppNode>,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
-    services: HashMap<(String, String), ZoneService>,
+    services: HashMap<(String, String), ServiceDesc>,
     lease_result: Option<LeaseGrantResult>,
     lease_future: Option<Pin<Box<dyn Future<Output = Result<LeaseGrantResult, Error>> + Send>>>,
     replug_future: Option<Pin<Box<dyn Future<Output = Result<PlugResult, Error>> + Send>>>,
@@ -202,7 +202,7 @@ impl KeepTask {
                 return;
             }
 
-            let services: Vec<ZoneService> = self.services.values().cloned().collect();
+            let services: Vec<ServiceDesc> = self.services.values().cloned().collect();
             if delay_plug {
                 let (client, endpoint, lease_id) = (
                     self.client.clone(),
@@ -233,7 +233,7 @@ impl KeepTask {
         }
     }
 
-    fn plug_one(&mut self, service: ZoneService, tx: oneshot::Sender<Result<(), Error>>) {
+    fn plug_one(&mut self, service: ServiceDesc, tx: oneshot::Sender<Result<(), Error>>) {
         if let Some(ref lease_result) = self.lease_result {
             let mut cmd_tx = self.cmd_tx.clone();
             spawn(

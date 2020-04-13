@@ -354,7 +354,7 @@ impl Client {
         .param_opt("zone", zone)
         .param("revision", &format!("{}", revision))
         .param("timeout", &format!("{}", timeout.as_secs()))
-        .send()
+        .get_option()
         .map(|result| match result {
             Ok(r) => Ok(r),
             Err(e) => {

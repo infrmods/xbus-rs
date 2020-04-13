@@ -163,6 +163,14 @@ impl<'a, C: Connect + Send + Sync + Clone + 'static> RequestBuilder<'a, C> {
             .map(|result| result.and_then(|resp| resp.get()))
     }
 
+    pub fn get_option<T>(self) -> impl Future<Output = Result<Option<T>, Error>>
+    where
+        for<'de> T: Deserialize<'de> + Send + 'static,
+    {
+        self.get_response()
+            .map(|result| result.and_then(|resp| resp.get_option()))
+    }
+
     pub fn get_ok(self) -> impl Future<Output = Result<(), Error>> {
         self.get_response::<()>()
             .map(|result| result.and_then(|resp| resp.get_ok()))
@@ -205,6 +213,14 @@ impl<T> Response<T> {
                 }
             }
             None => Error::from("missing error"),
+        }
+    }
+
+    fn get_option(self) -> Result<Option<T>, Error> {
+        if self.ok {
+            Ok(self.result)
+        } else {
+            Err(Self::convert_err(self.error))
         }
     }
 

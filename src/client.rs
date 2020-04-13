@@ -356,7 +356,7 @@ impl Client {
         .param("timeout", &format!("{}", timeout.as_secs()))
         .send()
         .map(|result| match result {
-            Ok(r) => Ok(Some(r)),
+            Ok(r) => Ok(r),
             Err(e) => {
                 if e.is_timeout() {
                     Ok(None)

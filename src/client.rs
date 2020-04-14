@@ -388,7 +388,7 @@ pub struct ServiceDesc {
     pub service: String,
     pub zone: String,
     #[serde(rename = "type")]
-    pub typ: String,
+    pub typ: Option<String>,
     pub proto: Option<String>,
     pub description: Option<String>,
 }

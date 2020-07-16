@@ -16,7 +16,7 @@ tokio = {version="0.2", features=["stream", "macros"]}
 log = "0.4"
 http = "*"
 percent-encoding = "2.1"
-tokio-rustls = "0.13"
+tokio-rustls = "0.14"
 webpki = "*"
 webpki-roots = "*"
 ring = "*"
@@ -24,7 +24,7 @@ untrusted = "*"
 bytes = "*"
 
 [dependencies.rustls]
-version = "*"
+version = "0.18"
 features = ["dangerous_configuration"]
 
 [dev-dependencies]

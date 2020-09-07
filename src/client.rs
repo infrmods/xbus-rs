@@ -119,6 +119,14 @@ impl Client {
             .send()
     }
 
+    pub fn get_service_only_zones(&self, service: &str) -> impl Future<Output = Result<ServiceWithRawZoneResult, Error>> {
+        self.request(Method::GET, &format!("/api/v1/services/{}?only_zone=true", service)).send()
+    }
+
+    pub fn get_service_by_zone(&self, service: &str, zone: &str) -> impl Future<Output = Result<ServiceResult, Error>> {
+        self.request(Method::GET, &format!("/api/v1/services/{}/{}", service, zone)).send()
+    }
+
     pub fn plug_service(
         &self,
         service: &ServiceDesc,
@@ -469,6 +477,18 @@ pub struct Service {
 #[derive(Deserialize, Debug, Clone)]
 pub struct ServiceResult {
     pub service: Service,
+    pub revision: u64,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ServiceWithRawZone {
+    pub service: String,
+    pub zones: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ServiceWithRawZoneResult {
+    pub service: ServiceWithRawZone,
     pub revision: u64,
 }
 

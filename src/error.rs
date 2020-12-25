@@ -1,5 +1,5 @@
 use http;
-use hyper::error::Error as HttpError;
+use hyper::Error as HttpError;
 use serde_json::Error as JsonError;
 use serde_yaml::Error as YamlError;
 use std::error::Error as StdError;

@@ -2,7 +2,7 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 #[macro_use]
-extern crate serde_derive;
+extern crate serde;
 
 pub mod cert;
 pub mod error;

@@ -1,17 +1,15 @@
 use crate::cert::get_cert_cn;
 use crate::error::Error;
-use bytes::{Buf, BufMut};
 use futures::prelude::*;
 use hyper::client::connect::{Connected, Connection};
 use hyper::service::Service;
 use hyper::Uri;
 use rustls::{self, Certificate, ClientConfig, PrivateKey};
-use std::io::Error as IoErr;
-use std::mem::MaybeUninit;
+use std::io::{Error as IoErr, IoSlice};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
 use webpki;
@@ -107,32 +105,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeHttpsStream<T> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize, IoErr>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<Result<(), IoErr>> {
         match self.get_mut() {
             MaybeHttpsStream::Http(http) => Pin::new(http).poll_read(cx, buf),
             MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_read(cx, buf),
-        }
-    }
-
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
-        match self {
-            MaybeHttpsStream::Http(http) => http.prepare_uninitialized_buffer(buf),
-            MaybeHttpsStream::Tls(tls) => tls.prepare_uninitialized_buffer(buf),
-        }
-    }
-
-    fn poll_read_buf<B: BufMut>(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut B,
-    ) -> Poll<Result<usize, IoErr>>
-    where
-        Self: Sized,
-    {
-        match self.get_mut() {
-            MaybeHttpsStream::Http(http) => Pin::new(http).poll_read_buf(cx, buf),
-            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_read_buf(cx, buf),
         }
     }
 }
@@ -163,17 +140,21 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeHttpsStream<T> {
         }
     }
 
-    fn poll_write_buf<B: Buf>(
+    fn poll_write_vectored(
         self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut B,
-    ) -> Poll<Result<usize, IoErr>>
-    where
-        Self: Sized,
-    {
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<Result<usize, IoErr>> {
         match self.get_mut() {
-            MaybeHttpsStream::Http(http) => Pin::new(http).poll_write_buf(cx, buf),
-            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_write_buf(cx, buf),
+            MaybeHttpsStream::Http(http) => Pin::new(http).poll_write_vectored(cx, bufs),
+            MaybeHttpsStream::Tls(tls) => Pin::new(tls).poll_write_vectored(cx, bufs),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            MaybeHttpsStream::Http(http) => http.is_write_vectored(),
+            MaybeHttpsStream::Tls(tls) => tls.is_write_vectored(),
         }
     }
 }

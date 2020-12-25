@@ -5,28 +5,26 @@ authors = ["lolynx <londevil@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-serde = "1.0"
-serde_derive = "1.0"
+serde = {version="1.0", features=["derive"]}
 serde_json = "1.0"
 serde_yaml = "0.8"
-hyper = "0.13"
+hyper = {version="0.14", features=["client", "http1", "tcp"]}
 url = "2.1"
 futures = "0.3"
-tokio = {version="0.2", features=["stream", "macros"]}
+tokio = {version="1.0", features=["macros", "rt", "time", "rt-multi-thread"]}
 log = "0.4"
 http = "*"
 percent-encoding = "2.1"
-tokio-rustls = "0.14"
+tokio-rustls = "0.22"
 webpki = "*"
 webpki-roots = "*"
 ring = "*"
 untrusted = "*"
-bytes = "0.5"
 
 [dependencies.rustls]
-version = "0.18"
+version = "0.19"
 features = ["dangerous_configuration"]
 
 [dev-dependencies]
-env_logger = "0.7"
+env_logger = "0.8"
 clap = "2.33"

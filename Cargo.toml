@@ -20,7 +20,6 @@ webpki = "*"
 webpki-roots = "*"
 ring = "*"
 untrusted = "*"
-bytes = "*"
 
 [dependencies.rustls]
 version = "0.19"

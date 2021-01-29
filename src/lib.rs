@@ -21,5 +21,6 @@ pub use self::error::Error;
 pub use self::https::TlsClientConfigExt;
 pub use self::service_keeper::ServiceKeeper;
 pub use self::watcher::WatchHandle;
+pub use self::request::Form;
 
 pub const DEFAULT_ZONE: &str = "default";

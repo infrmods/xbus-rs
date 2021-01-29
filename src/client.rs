@@ -71,7 +71,7 @@ impl Client {
         self.app_name.as_deref()
     }
 
-    fn request<'a>(
+    pub fn request<'a>(
         &'a self,
         method: Method,
         path: &'a str,
@@ -401,7 +401,7 @@ pub struct ServiceDesc {
     pub description: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServiceDescEvent {
     pub event_type: String,
     pub service: ServiceDesc,
@@ -412,7 +412,7 @@ impl ServiceDescEvent {
     pub const DELETE: &'static str = "delete";
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServiceDescWatchResult {
     pub events: Option<Vec<ServiceDescEvent>>,
     pub revision: u64,
@@ -424,21 +424,21 @@ impl RevisionResult for ServiceDescWatchResult {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ItemsResult {
     configs: Vec<Item>,
     #[allow(dead_code)]
     revision: u64,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ItemResult {
     config: Item,
     #[allow(dead_code)]
     revision: u64,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Item {
     pub name: String,
     pub value: String,
@@ -455,7 +455,7 @@ pub struct ServiceEndpoint {
     pub config: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ZoneService {
     #[serde(flatten)]
     pub desc: ServiceDesc,
@@ -468,38 +468,38 @@ impl ZoneService {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Service {
     pub service: String,
     pub zones: HashMap<String, ZoneService>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceResult {
     pub service: Service,
     pub revision: u64,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceWithRawZone {
     pub service: String,
     pub zones: Vec<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceWithRawZoneResult {
     pub service: ServiceWithRawZone,
     pub revision: u64,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LeaseGrantResult {
     pub lease_id: i64,
     pub ttl: i64,
     pub new_app_node: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlugResult {
     pub lease_id: i64,
     pub ttl: i64,
@@ -528,7 +528,7 @@ pub struct AppNode {
     pub config: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppNodes {
     pub nodes: HashMap<String, String>,
     pub revision: u64,

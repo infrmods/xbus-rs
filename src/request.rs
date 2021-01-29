@@ -89,6 +89,20 @@ impl<'a, C: Connect + Send + Sync + Clone + 'static> RequestBuilder<'a, C> {
         }
     }
 
+    // 注意不要乱用,不做 json 转 form 合法性检查
+    pub fn json_to_form(self, data: serde_json::Value) -> RequestBuilder<'a, C> {
+        // json 只含一层
+        let mut form = Form::new();
+        if data.is_object() {
+            let map = data.as_object().unwrap();
+            for (k, v) in map.iter() {
+                let _ = form.set(k, v);
+            }
+        }
+
+        self.form(form)
+    }
+
     fn get_response<T>(mut self) -> Pin<Box<dyn Future<Output = Result<Response<T>, Error>> + Send>>
     where
         for<'de> T: Deserialize<'de> + Send + 'static,

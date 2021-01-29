@@ -79,7 +79,7 @@ impl Client {
         self.request_timeout(method, path, self.config.request_timeout)
     }
 
-    fn request_timeout<'a>(
+    pub fn request_timeout<'a>(
         &'a self,
         method: Method,
         path: &'a str,

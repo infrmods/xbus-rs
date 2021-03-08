@@ -166,7 +166,7 @@ impl Client {
     ) -> impl Future<Output = Result<(), Error>> {
         self.request(
             Method::DELETE,
-            &format!("/api/v1/service/{}/{}/{}", service, zone, addr),
+            &format!("/api/v1/services/{}/{}/{}", service, zone, addr),
         )
         .get_ok()
     }

@@ -4,7 +4,7 @@ use futures::prelude::*;
 use hyper::client::connect::{Connected, Connection};
 use hyper::service::Service;
 use hyper::Uri;
-use rustls::{self, Certificate, ClientConfig, PrivateKey};
+use tokio_rustls::rustls::{self, Certificate, ClientConfig, PrivateKey};
 use std::io::{Error as IoErr, IoSlice};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -12,9 +12,8 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
-use webpki;
-use webpki::DNSNameRef;
-use webpki_roots;
+use tokio_rustls::webpki;
+use tokio_rustls::webpki::DNSNameRef;
 
 pub trait TlsClientConfigExt {
     fn set_insecure(&mut self);

@@ -1,5 +1,5 @@
 use untrusted::{Input, Reader};
-use webpki::trust_anchor_util::cert_der_as_trust_anchor;
+use tokio_rustls::webpki::trust_anchor_util::cert_der_as_trust_anchor;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u8)]

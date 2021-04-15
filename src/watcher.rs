@@ -1,5 +1,5 @@
-use super::client::RevisionResult;
-use super::error::Error;
+use crate::error::Error;
+use crate::RevisionResult;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use std::pin::Pin;

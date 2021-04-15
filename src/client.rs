@@ -1,18 +1,16 @@
-use super::addr_serde;
-use super::error::Error;
-use super::watcher::{WatchStream, WatchTask};
-use crate::config::Config;
 use crate::https::{HttpsConnector, TlsClientConfigExt};
 use crate::request::{Form, RequestBuilder};
+use crate::service::{AppNode, AppNodes, Service, ServiceDesc, ServiceEndpoint};
 use crate::service_keeper::ServiceKeeper;
+use crate::watcher::{WatchStream, WatchTask};
+use crate::{config::Config, service::ServiceDescEvent};
+use crate::{error::Error, RevisionResult};
 use futures::prelude::*;
 use hyper::client::{Client as HttpClient, HttpConnector};
 use hyper::Method;
 use serde::Deserialize;
 use serde_json;
 use serde_yaml;
-use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -119,12 +117,27 @@ impl Client {
             .send()
     }
 
-    pub fn get_service_only_zones(&self, service: &str) -> impl Future<Output = Result<ServiceWithRawZoneResult, Error>> {
-        self.request(Method::GET, &format!("/api/v1/services/{}?only_zone=true", service)).send()
+    pub fn get_service_only_zones(
+        &self,
+        service: &str,
+    ) -> impl Future<Output = Result<ServiceWithRawZoneResult, Error>> {
+        self.request(
+            Method::GET,
+            &format!("/api/v1/services/{}?only_zone=true", service),
+        )
+        .send()
     }
 
-    pub fn get_service_by_zone(&self, service: &str, zone: &str) -> impl Future<Output = Result<ServiceResult, Error>> {
-        self.request(Method::GET, &format!("/api/v1/services/{}/{}", service, zone)).send()
+    pub fn get_service_by_zone(
+        &self,
+        service: &str,
+        zone: &str,
+    ) -> impl Future<Output = Result<ServiceResult, Error>> {
+        self.request(
+            Method::GET,
+            &format!("/api/v1/services/{}/{}", service, zone),
+        )
+        .send()
     }
 
     pub fn plug_service(
@@ -391,39 +404,6 @@ impl Client {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ServiceDesc {
-    pub service: String,
-    pub zone: String,
-    #[serde(rename = "type")]
-    pub typ: Option<String>,
-    pub proto: Option<String>,
-    pub description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ServiceDescEvent {
-    pub event_type: String,
-    pub service: ServiceDesc,
-}
-
-impl ServiceDescEvent {
-    pub const PUT: &'static str = "put";
-    pub const DELETE: &'static str = "delete";
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ServiceDescWatchResult {
-    pub events: Option<Vec<ServiceDescEvent>>,
-    pub revision: u64,
-}
-
-impl RevisionResult for ServiceDescWatchResult {
-    fn get_revision(&self) -> u64 {
-        self.revision
-    }
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ItemsResult {
     configs: Vec<Item>,
@@ -445,66 +425,6 @@ pub struct Item {
     pub version: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceEndpoint {
-    #[serde(
-        serialize_with = "addr_serde::serialize_address",
-        deserialize_with = "addr_serde::deserialize_address"
-    )]
-    pub address: SocketAddr,
-    pub config: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ZoneService {
-    #[serde(flatten)]
-    pub desc: ServiceDesc,
-    pub endpoints: Vec<ServiceEndpoint>,
-}
-
-impl ZoneService {
-    pub fn addresses<'a>(&'a self) -> impl Iterator<Item = SocketAddr> + 'a {
-        self.endpoints.iter().map(|e| e.address)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Service {
-    pub service: String,
-    pub zones: HashMap<String, ZoneService>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceResult {
-    pub service: Service,
-    pub revision: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceWithRawZone {
-    pub service: String,
-    pub zones: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceWithRawZoneResult {
-    pub service: ServiceWithRawZone,
-    pub revision: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct LeaseGrantResult {
-    pub lease_id: i64,
-    pub ttl: i64,
-    pub new_app_node: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PlugResult {
-    pub lease_id: i64,
-    pub ttl: i64,
-}
-
 impl Item {
     pub fn json<T>(&self) -> Result<T, serde_json::Error>
     where
@@ -522,20 +442,9 @@ impl Item {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AppNode {
-    pub label: Option<String>,
-    pub key: String,
-    pub config: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AppNodes {
-    pub nodes: HashMap<String, String>,
+pub struct ServiceResult {
+    pub service: Service,
     pub revision: u64,
-}
-
-pub(crate) trait RevisionResult {
-    fn get_revision(&self) -> u64;
 }
 
 impl RevisionResult for ServiceResult {
@@ -544,8 +453,39 @@ impl RevisionResult for ServiceResult {
     }
 }
 
-impl RevisionResult for AppNodes {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LeaseGrantResult {
+    pub lease_id: i64,
+    pub ttl: i64,
+    pub new_app_node: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PlugResult {
+    pub lease_id: i64,
+    pub ttl: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ServiceDescWatchResult {
+    pub events: Option<Vec<ServiceDescEvent>>,
+    pub revision: u64,
+}
+
+impl RevisionResult for ServiceDescWatchResult {
     fn get_revision(&self) -> u64 {
         self.revision
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ServiceWithRawZone {
+    pub service: String,
+    pub zones: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ServiceWithRawZoneResult {
+    pub service: ServiceWithRawZone,
+    pub revision: u64,
 }

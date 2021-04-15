@@ -1,4 +1,5 @@
-use super::client::{AppNode, Client, LeaseGrantResult, PlugResult, ServiceDesc, ServiceEndpoint};
+use super::service::{AppNode, ServiceDesc, ServiceEndpoint};
+use crate::client::{Client, LeaseGrantResult, PlugResult};
 use crate::error::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;

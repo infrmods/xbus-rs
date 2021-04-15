@@ -16,9 +16,9 @@ log = "0.4"
 http = "*"
 percent-encoding = "2.1"
 tokio-rustls = "0.22"
-webpki-roots = "<=0.21"
-ring = "*"
-untrusted = "*"
+webpki-roots = "0.21"
+ring = "0.16"
+untrusted = "0.7"
 
 [dependencies.rustls]
 version = "0.19"

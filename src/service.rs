@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
 use crate::addr_serde;
@@ -51,6 +52,15 @@ pub struct ServiceEndpoint {
     )]
     pub address: SocketAddr,
     pub config: Option<String>,
+}
+
+impl ServiceEndpoint {
+    pub fn de_config_json<'de, T>(&'de self) -> Result<Option<T>, serde_json::Error>
+    where
+        T: Deserialize<'de>,
+    {
+        self.config.as_deref().map(serde_json::from_str).transpose()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
